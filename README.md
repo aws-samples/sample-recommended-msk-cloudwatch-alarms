@@ -1,6 +1,6 @@
-# Amazon MSK Production-Ready CloudWatch Alarms
+# Sample Amazon MSK Production-Ready CloudWatch Alarms
 
-This repository provides AWS CloudFormation templates to deploy recommended CloudWatch alarms for Amazon Managed Streaming for Apache Kafka (Amazon MSK) clusters. The alarms follow AWS best practices as outlined in the [MSK Best Practices documentation](https://docs.aws.amazon.com/msk/latest/developerguide/bestpractices.html) and the AWS Big Data Blog post [Set up production-ready monitoring for Amazon MSK using CloudWatch alarms](https://aws.amazon.com/blogs/big-data/set-up-production-ready-monitoring-for-amazon-msk-using-cloudwatch-alarms/).
+This sample code repository provides AWS CloudFormation templates for deploying production-ready Amazon CloudWatch alarms for Amazon Managed Streaming for Apache Kafka (Amazon MSK) clusters. The templates create per-broker and cluster-level alarms based on AWS best practices as outlined in the [MSK Best Practices documentation](https://docs.aws.amazon.com/msk/latest/developerguide/bestpractices.html) and the AWS Big Data Blog post [Set up production-ready monitoring for Amazon MSK using CloudWatch alarms](https://aws.amazon.com/blogs/big-data/set-up-production-ready-monitoring-for-amazon-msk-using-cloudwatch-alarms/).
 
 ## Features
 
@@ -22,67 +22,67 @@ This repository provides AWS CloudFormation templates to deploy recommended Clou
 ### ARN-based deployment (single cluster)
 
 ```
-┌─────────────────────────────────────────────────────────────────┐
-│                     CloudFormation Stack                          │
-├─────────────────────────────────────────────────────────────────┤
-│                                                                   │
-│  ┌───────────────┐         ┌──────────────────────────────────┐  │
-│  │  Lambda Fn    │────────►│  CloudWatch Alarms (per broker)  │  │
-│  │  (Custom Res) │         │  - Broker1-CPUUtilization         │  │
-│  └───────────────┘         │  - Broker1-KafkaDataLogsDiskUsed  │  │
-│         │                  │  - Broker1-HeapMemoryAfterGC      │  │
-│         │                  │  - Broker1-TrafficShaping          │  │
-│         │                  │  - Broker1-NetworkRxErrors         │  │
-│         │                  │  - ... (repeated per broker)       │  │
-│         │                  └──────────────┬───────────────────┘  │
-│         │                                 │                       │
-│         │                  ┌──────────────▼───────────────────┐  │
-│         └─────────────────►│  CloudWatch Alarms (cluster)     │  │
-│                            │  - ActiveControllerCount          │  │
-│                            │  - OfflinePartitionsCount         │  │
-│  ┌───────────────┐         └──────────────┬───────────────────┘  │
-│  │  IAM Role     │                        │                       │
-│  └───────────────┘                        ▼                       │
-│                            ┌──────────────────────────────────┐  │
-│                            │  SNS Topic ──► Email/PagerDuty   │  │
-│                            └──────────────────────────────────┘  │
-└─────────────────────────────────────────────────────────────────┘
+┌────────────────────────────────────────────────────────────────┐
+│                     CloudFormation Stack                        │
+├────────────────────────────────────────────────────────────────┤
+│                                                                │
+│  ┌──────────────┐       ┌────────────────────────────────────┐ │
+│  │  Lambda Fn   │──────►│  CloudWatch Alarms (per broker)    │ │
+│  │ (Custom Res) │       │  - Broker1-CPUUtilization           │ │
+│  └──────────────┘       │  - Broker1-KafkaDataLogsDiskUsed    │ │
+│         │               │  - Broker1-HeapMemoryAfterGC        │ │
+│         │               │  - Broker1-TrafficShaping            │ │
+│         │               │  - Broker1-NetworkRxErrors           │ │
+│         │               │  - ... (repeated per broker)         │ │
+│         │               └─────────────────┬──────────────────┘ │
+│         │                                 │                    │
+│         │               ┌─────────────────▼──────────────────┐ │
+│         └──────────────►│  CloudWatch Alarms (cluster-level)  │ │
+│                         │  - ActiveControllerCount             │ │
+│                         │  - OfflinePartitionsCount            │ │
+│  ┌──────────────┐       └─────────────────┬──────────────────┘ │
+│  │   IAM Role   │                         │                    │
+│  └──────────────┘                         ▼                    │
+│                         ┌────────────────────────────────────┐ │
+│                         │   SNS Topic ──► Email / PagerDuty  │ │
+│                         └────────────────────────────────────┘ │
+└────────────────────────────────────────────────────────────────┘
 ```
 
 ### Tag-based deployment (multi-cluster)
 
 ```
-┌─────────────────────────────────────────────────────────────────┐
-│                     CloudFormation Stack                          │
-├─────────────────────────────────────────────────────────────────┤
-│                                                                   │
-│  ┌───────────────┐    ┌────────────────┐                         │
-│  │  EventBridge  │───►│  Lambda Fn     │                         │
-│  │  (hourly)     │    │  (Discovery +  │                         │
-│  └───────────────┘    │   Alarm Mgmt)  │                         │
-│                       └───────┬────────┘                         │
-│  ┌───────────────┐            │                                   │
-│  │  Custom Res   │────────────┘                                   │
-│  │  (on deploy)  │            │                                   │
-│  └───────────────┘            ▼                                   │
-│                       ┌───────────────┐                           │
-│                       │  MSK API      │                           │
-│                       │  (discover    │                           │
-│                       │   by tag)     │                           │
-│                       └───────┬───────┘                           │
-│                               │                                   │
-│              ┌────────────────┼────────────────┐                  │
-│              ▼                ▼                ▼                   │
-│  ┌──────────────────┐ ┌─────────────┐ ┌─────────────┐           │
-│  │ Cluster A alarms │ │ Cluster B   │ │ Cluster C   │           │
-│  │ (per broker)     │ │ (per broker)│ │ (per broker)│           │
-│  └────────┬─────────┘ └──────┬──────┘ └──────┬──────┘           │
-│           └───────────────────┼───────────────┘                   │
-│                               ▼                                   │
-│                 ┌──────────────────────────┐                      │
-│                 │  SNS Topic ──► Email     │                      │
-│                 └──────────────────────────┘                      │
-└─────────────────────────────────────────────────────────────────┘
+┌────────────────────────────────────────────────────────────────┐
+│                     CloudFormation Stack                        │
+├────────────────────────────────────────────────────────────────┤
+│                                                                │
+│  ┌──────────────┐     ┌──────────────────┐                    │
+│  │ EventBridge  │────►│    Lambda Fn     │                    │
+│  │  (hourly)    │     │  (Discovery +    │                    │
+│  └──────────────┘     │   Alarm Mgmt)    │                    │
+│                       └────────┬─────────┘                    │
+│  ┌──────────────┐              │                              │
+│  │ Custom Res   │─────────────►│                              │
+│  │ (on deploy)  │              │                              │
+│  └──────────────┘              ▼                              │
+│                       ┌──────────────────┐                    │
+│                       │     MSK API      │                    │
+│                       │  (discover by    │                    │
+│                       │   tag match)     │                    │
+│                       └────────┬─────────┘                    │
+│                                │                              │
+│            ┌───────────────────┼───────────────────┐          │
+│            ▼                   ▼                   ▼          │
+│  ┌──────────────────┐ ┌────────────────┐ ┌────────────────┐  │
+│  │ Cluster A alarms │ │ Cluster B      │ │ Cluster C      │  │
+│  │  (per broker)    │ │  (per broker)  │ │  (per broker)  │  │
+│  └────────┬─────────┘ └───────┬────────┘ └───────┬────────┘  │
+│           └────────────────────┼──────────────────┘           │
+│                                ▼                              │
+│                   ┌────────────────────────┐                  │
+│                   │  SNS Topic ──► Email   │                  │
+│                   └────────────────────────┘                  │
+└────────────────────────────────────────────────────────────────┘
 ```
 
 ## Templates
