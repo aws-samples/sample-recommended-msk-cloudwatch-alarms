@@ -1,0 +1,462 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: >
+  Production-ready CloudWatch alarms for Amazon MSK clusters discovered by tags.
+  Uses a Lambda-backed custom resource to find MSK clusters matching specified tags
+  and deploys per-broker alarms for each discovered cluster using correct
+  CloudWatch dimensions (Cluster Name, Broker ID).
+  Based on AWS best practices: https://docs.aws.amazon.com/msk/latest/developerguide/bestpractices.html
+
+Metadata:
+  AWS::CloudFormation::Interface:
+    ParameterGroups:
+      - Label:
+          default: Cluster Discovery Configuration
+        Parameters:
+          - TagKey
+          - TagValue
+      - Label:
+          default: Notification Configuration
+        Parameters:
+          - NotificationEmail
+          - ExistingSNSTopicArn
+      - Label:
+          default: Alarm Thresholds
+        Parameters:
+          - CPUThreshold
+          - HeapMemoryThreshold
+          - DiskUsageThreshold
+      - Label:
+          default: Optional Alarms
+        Parameters:
+          - EnableConnectionAlarms
+          - EnableNetworkAlarms
+          - EnableTrafficShapingAlarms
+
+Parameters:
+  TagKey:
+    Type: String
+    Default: Environment
+    Description: Tag key used to identify target MSK clusters
+
+  TagValue:
+    Type: String
+    Default: production
+    Description: Tag value used to identify target MSK clusters
+
+  NotificationEmail:
+    Type: String
+    Default: ''
+    Description: Email address for alarm notifications (leave empty if using ExistingSNSTopicArn)
+
+  ExistingSNSTopicArn:
+    Type: String
+    Default: ''
+    Description: ARN of an existing SNS topic for alarm notifications (overrides NotificationEmail)
+
+  CPUThreshold:
+    Type: Number
+    Default: 60
+    MinValue: 1
+    MaxValue: 100
+    Description: CPU utilization alarm threshold (percentage)
+
+  HeapMemoryThreshold:
+    Type: Number
+    Default: 60
+    MinValue: 1
+    MaxValue: 100
+    Description: Heap memory after GC alarm threshold (percentage)
+
+  DiskUsageThreshold:
+    Type: Number
+    Default: 85
+    MinValue: 1
+    MaxValue: 100
+    Description: Kafka data logs disk usage alarm threshold (percentage)
+
+  EnableConnectionAlarms:
+    Type: String
+    Default: 'true'
+    AllowedValues: ['true', 'false']
+    Description: Enable IAM connection limit alarms
+
+  EnableNetworkAlarms:
+    Type: String
+    Default: 'true'
+    AllowedValues: ['true', 'false']
+    Description: Enable network error alarms
+
+  EnableTrafficShapingAlarms:
+    Type: String
+    Default: 'true'
+    AllowedValues: ['true', 'false']
+    Description: Enable traffic shaping (network throttling) alarms
+
+Conditions:
+  CreateSNSTopic: !And
+    - !Equals [!Ref ExistingSNSTopicArn, '']
+    - !Not [!Equals [!Ref NotificationEmail, '']]
+  UseExistingSNSTopic: !Not [!Equals [!Ref ExistingSNSTopicArn, '']]
+
+Resources:
+  # ============================================================
+  # SNS Topic for Alarm Notifications
+  # ============================================================
+  AlarmSNSTopic:
+    Type: AWS::SNS::Topic
+    Condition: CreateSNSTopic
+    Properties:
+      TopicName: !Sub 'MSK-Alarms-${TagKey}-${TagValue}'
+      DisplayName: !Sub 'MSK Alarms - ${TagKey}:${TagValue}'
+      Tags:
+        - Key: Purpose
+          Value: MSKMonitoring
+        - Key: FilterTag
+          Value: !Sub '${TagKey}=${TagValue}'
+
+  AlarmSNSSubscription:
+    Type: AWS::SNS::Subscription
+    Condition: CreateSNSTopic
+    Properties:
+      TopicArn: !Ref AlarmSNSTopic
+      Protocol: email
+      Endpoint: !Ref NotificationEmail
+
+  # ============================================================
+  # Lambda Execution Role
+  # ============================================================
+  MSKDiscoveryLambdaRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: MSKDiscoveryPolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - kafka:ListClustersV2
+                  - kafka:ListTagsForResource
+                  - kafka:DescribeClusterV2
+                Resource: '*'
+              - Effect: Allow
+                Action:
+                  - cloudwatch:PutMetricAlarm
+                  - cloudwatch:DeleteAlarms
+                  - cloudwatch:DescribeAlarms
+                  - cloudwatch:ListTagsForResource
+                  - cloudwatch:TagResource
+                Resource: !Sub 'arn:aws:cloudwatch:${AWS::Region}:${AWS::AccountId}:alarm:MSK-*'
+
+  # ============================================================
+  # Lambda Function for Cluster Discovery and Alarm Creation
+  # ============================================================
+  MSKAlarmManagerFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      Runtime: python3.12
+      Handler: index.handler
+      Timeout: 300
+      MemorySize: 256
+      Role: !GetAtt MSKDiscoveryLambdaRole.Arn
+      Environment:
+        Variables:
+          TAG_KEY: !Ref TagKey
+          TAG_VALUE: !Ref TagValue
+          CPU_THRESHOLD: !Ref CPUThreshold
+          HEAP_MEMORY_THRESHOLD: !Ref HeapMemoryThreshold
+          DISK_USAGE_THRESHOLD: !Ref DiskUsageThreshold
+          ENABLE_CONNECTION_ALARMS: !Ref EnableConnectionAlarms
+          ENABLE_NETWORK_ALARMS: !Ref EnableNetworkAlarms
+          ENABLE_TRAFFIC_SHAPING_ALARMS: !Ref EnableTrafficShapingAlarms
+          SNS_TOPIC_ARN: !If
+            - UseExistingSNSTopic
+            - !Ref ExistingSNSTopicArn
+            - !If
+              - CreateSNSTopic
+              - !Ref AlarmSNSTopic
+              - ''
+          STACK_NAME: !Ref AWS::StackName
+      Code:
+        ZipFile: |
+          import json
+          import os
+          import boto3
+          import cfnresponse
+          import logging
+
+          logger = logging.getLogger()
+          logger.setLevel(logging.INFO)
+
+          kafka_client = boto3.client('kafka')
+          cloudwatch = boto3.client('cloudwatch')
+
+
+          def get_clusters_by_tag(tag_key, tag_value):
+              """Discover MSK clusters matching the specified tag."""
+              clusters = []
+              paginator = kafka_client.get_paginator('list_clusters_v2')
+              for page in paginator.paginate():
+                  for cluster in page.get('ClusterInfoList', []):
+                      if cluster.get('State') != 'ACTIVE':
+                          continue
+                      try:
+                          tags = kafka_client.list_tags_for_resource(
+                              ResourceArn=cluster['ClusterArn']
+                          ).get('Tags', {})
+                          if tags.get(tag_key) == tag_value:
+                              broker_count = 3
+                              if 'Provisioned' in cluster:
+                                  broker_count = cluster['Provisioned'].get('NumberOfBrokerNodes', 3)
+                              clusters.append({
+                                  'name': cluster['ClusterName'],
+                                  'arn': cluster['ClusterArn'],
+                                  'brokers': broker_count
+                              })
+                      except Exception as e:
+                          logger.warning(f"Tag check failed for {cluster['ClusterArn']}: {e}")
+              return clusters
+
+
+          def create_alarms_for_cluster(cluster_name, broker_count, alarm_actions, config, stack_name):
+              """Create per-broker and cluster-level alarms for one MSK cluster."""
+              tags = [
+                  {'Key': 'ManagedBy', 'Value': stack_name},
+                  {'Key': 'MSKCluster', 'Value': cluster_name}
+              ]
+              count = 0
+
+              # --- Cluster-level alarms ---
+              cluster_dims = [{'Name': 'Cluster Name', 'Value': cluster_name}]
+              cluster_alarms = [
+                  ('ActiveControllerCount', 'Sum', 60, 1, 1, 1, 'LessThanThreshold', 'breaching'),
+                  ('OfflinePartitionsCount', 'Sum', 300, 1, 1, 0, 'GreaterThanThreshold', 'notBreaching'),
+              ]
+              for metric, stat, period, ep, dp, thresh, comp, missing in cluster_alarms:
+                  try:
+                      cloudwatch.put_metric_alarm(
+                          AlarmName=f'MSK-{cluster_name}-{metric}',
+                          AlarmDescription=f'MSK cluster alarm: {metric}',
+                          Namespace='AWS/Kafka',
+                          MetricName=metric,
+                          Dimensions=cluster_dims,
+                          Statistic=stat, Period=period,
+                          EvaluationPeriods=ep, DatapointsToAlarm=dp,
+                          Threshold=thresh, ComparisonOperator=comp,
+                          TreatMissingData=missing,
+                          AlarmActions=alarm_actions, OKActions=alarm_actions,
+                          Tags=tags
+                      )
+                      count += 1
+                  except Exception as e:
+                      logger.error(f"Failed {metric}: {e}")
+
+              # --- Per-broker alarms ---
+              for bid in range(1, broker_count + 1):
+                  broker_dims = [
+                      {'Name': 'Cluster Name', 'Value': cluster_name},
+                      {'Name': 'Broker ID', 'Value': str(bid)}
+                  ]
+
+                  # CPU metric math alarm
+                  try:
+                      cloudwatch.put_metric_alarm(
+                          AlarmName=f'MSK-{cluster_name}-Broker{bid}-CPUUtilization',
+                          AlarmDescription=f'Broker {bid} CPU > {config["cpu"]}%',
+                          Metrics=[
+                              {'Id': 'u', 'MetricStat': {'Metric': {'Namespace': 'AWS/Kafka', 'MetricName': 'CpuUser', 'Dimensions': broker_dims}, 'Period': 300, 'Stat': 'Average'}, 'ReturnData': False},
+                              {'Id': 's', 'MetricStat': {'Metric': {'Namespace': 'AWS/Kafka', 'MetricName': 'CpuSystem', 'Dimensions': broker_dims}, 'Period': 300, 'Stat': 'Average'}, 'ReturnData': False},
+                              {'Id': 't', 'Expression': 'u + s', 'Label': 'TotalCPU', 'ReturnData': True}
+                          ],
+                          EvaluationPeriods=3, DatapointsToAlarm=3,
+                          Threshold=float(config['cpu']),
+                          ComparisonOperator='GreaterThanThreshold',
+                          TreatMissingData='notBreaching',
+                          AlarmActions=alarm_actions, OKActions=alarm_actions, Tags=tags
+                      )
+                      count += 1
+                  except Exception as e:
+                      logger.error(f"Failed CPU Broker{bid}: {e}")
+
+                  # Standard per-broker alarms
+                  # (metric, stat, period, eval_periods, datapoints, threshold, comparison, missing, enabled)
+                  broker_alarms = [
+                      ('HeapMemoryAfterGC', 'Maximum', 300, 3, 3, float(config['heap']), 'GreaterThanThreshold', 'notBreaching', True),
+                      ('KafkaDataLogsDiskUsed', 'Maximum', 300, 1, 1, float(config['disk']), 'GreaterThanOrEqualToThreshold', 'notBreaching', True),
+                      ('UnderReplicatedPartitions', 'Maximum', 300, 3, 3, 0, 'GreaterThanThreshold', 'notBreaching', True),
+                      ('UnderMinIsrPartitionCount', 'Maximum', 300, 1, 1, 0, 'GreaterThanThreshold', 'notBreaching', True),
+                      ('VolumeQueueLength', 'Average', 300, 3, 3, 10, 'GreaterThanThreshold', 'notBreaching', True),
+                      ('TrafficShaping', 'Sum', 60, 1, 1, 0, 'GreaterThanThreshold', 'notBreaching', config['traffic']),
+                      ('BwInAllowanceExceeded', 'Sum', 300, 1, 1, 0, 'GreaterThanThreshold', 'notBreaching', config['traffic']),
+                      ('BwOutAllowanceExceeded', 'Sum', 300, 1, 1, 0, 'GreaterThanThreshold', 'notBreaching', config['traffic']),
+                      ('NetworkRxErrors', 'Sum', 300, 1, 1, 0, 'GreaterThanThreshold', 'notBreaching', config['network']),
+                      ('NetworkTxErrors', 'Sum', 300, 1, 1, 0, 'GreaterThanThreshold', 'notBreaching', config['network']),
+                      ('IAMTooManyConnections', 'Sum', 300, 1, 1, 0, 'GreaterThanThreshold', 'notBreaching', config['connection']),
+                  ]
+                  for metric, stat, period, ep, dp, thresh, comp, missing, enabled in broker_alarms:
+                      if not enabled:
+                          continue
+                      try:
+                          cloudwatch.put_metric_alarm(
+                              AlarmName=f'MSK-{cluster_name}-Broker{bid}-{metric}',
+                              AlarmDescription=f'Broker {bid}: {metric}',
+                              Namespace='AWS/Kafka', MetricName=metric,
+                              Dimensions=broker_dims,
+                              Statistic=stat, Period=period,
+                              EvaluationPeriods=ep, DatapointsToAlarm=dp,
+                              Threshold=thresh, ComparisonOperator=comp,
+                              TreatMissingData=missing,
+                              AlarmActions=alarm_actions, OKActions=alarm_actions,
+                              Tags=tags
+                          )
+                          count += 1
+                      except Exception as e:
+                          logger.error(f"Failed {metric} Broker{bid}: {e}")
+
+              return count
+
+
+          def delete_alarms_for_stack(stack_name):
+              """Delete all alarms managed by this stack."""
+              alarms_to_delete = []
+              paginator = cloudwatch.get_paginator('describe_alarms')
+              for page in paginator.paginate(AlarmNamePrefix='MSK-'):
+                  for alarm in page.get('MetricAlarms', []):
+                      try:
+                          resp = cloudwatch.list_tags_for_resource(ResourceARN=alarm['AlarmArn'])
+                          tags = {t['Key']: t['Value'] for t in resp.get('Tags', [])}
+                          if tags.get('ManagedBy') == stack_name:
+                              alarms_to_delete.append(alarm['AlarmName'])
+                      except Exception:
+                          pass
+              if alarms_to_delete:
+                  for i in range(0, len(alarms_to_delete), 100):
+                      cloudwatch.delete_alarms(AlarmNames=alarms_to_delete[i:i+100])
+              return len(alarms_to_delete)
+
+
+          def handler(event, context):
+              """CloudFormation custom resource handler."""
+              logger.info(f"Event: {json.dumps(event)}")
+              request_type = event['RequestType']
+              try:
+                  tag_key = os.environ['TAG_KEY']
+                  tag_value = os.environ['TAG_VALUE']
+                  stack_name = os.environ['STACK_NAME']
+                  sns_topic_arn = os.environ.get('SNS_TOPIC_ARN', '')
+                  alarm_actions = [sns_topic_arn] if sns_topic_arn else []
+
+                  config = {
+                      'cpu': os.environ.get('CPU_THRESHOLD', '60'),
+                      'heap': os.environ.get('HEAP_MEMORY_THRESHOLD', '60'),
+                      'disk': os.environ.get('DISK_USAGE_THRESHOLD', '85'),
+                      'traffic': os.environ.get('ENABLE_TRAFFIC_SHAPING_ALARMS', 'true') == 'true',
+                      'network': os.environ.get('ENABLE_NETWORK_ALARMS', 'true') == 'true',
+                      'connection': os.environ.get('ENABLE_CONNECTION_ALARMS', 'true') == 'true',
+                  }
+
+                  if request_type in ['Create', 'Update']:
+                      if request_type == 'Update':
+                          delete_alarms_for_stack(stack_name)
+
+                      clusters = get_clusters_by_tag(tag_key, tag_value)
+                      logger.info(f"Found {len(clusters)} clusters with {tag_key}={tag_value}")
+
+                      total_alarms = 0
+                      cluster_names = []
+                      for c in clusters:
+                          n = create_alarms_for_cluster(
+                              c['name'], c['brokers'], alarm_actions, config, stack_name
+                          )
+                          total_alarms += n
+                          cluster_names.append(c['name'])
+
+                      cfnresponse.send(event, context, cfnresponse.SUCCESS, {
+                          'ClustersFound': str(len(clusters)),
+                          'AlarmsCreated': str(total_alarms),
+                          'ClusterNames': ','.join(cluster_names) if cluster_names else 'none'
+                      })
+
+                  elif request_type == 'Delete':
+                      deleted = delete_alarms_for_stack(stack_name)
+                      cfnresponse.send(event, context, cfnresponse.SUCCESS, {
+                          'AlarmsDeleted': str(deleted)
+                      })
+
+              except Exception as e:
+                  logger.error(f"Error: {e}", exc_info=True)
+                  cfnresponse.send(event, context, cfnresponse.FAILED, {'Error': str(e)})
+
+  # ============================================================
+  # Custom Resource to Trigger Lambda
+  # ============================================================
+  MSKAlarmDeployment:
+    Type: Custom::MSKAlarms
+    Properties:
+      ServiceToken: !GetAtt MSKAlarmManagerFunction.Arn
+      TagKey: !Ref TagKey
+      TagValue: !Ref TagValue
+      CPUThreshold: !Ref CPUThreshold
+      HeapMemoryThreshold: !Ref HeapMemoryThreshold
+      DiskUsageThreshold: !Ref DiskUsageThreshold
+      EnableConnectionAlarms: !Ref EnableConnectionAlarms
+      EnableNetworkAlarms: !Ref EnableNetworkAlarms
+      EnableTrafficShapingAlarms: !Ref EnableTrafficShapingAlarms
+
+  # ============================================================
+  # EventBridge Rule for Periodic Refresh (discovers new clusters)
+  # ============================================================
+  AlarmRefreshSchedule:
+    Type: AWS::Events::Rule
+    Properties:
+      Description: Periodically refresh MSK alarms to discover new clusters
+      ScheduleExpression: 'rate(1 hour)'
+      State: ENABLED
+      Targets:
+        - Id: MSKAlarmRefresh
+          Arn: !GetAtt MSKAlarmManagerFunction.Arn
+          Input: !Sub '{"RequestType": "Update", "ResourceProperties": {}, "StackId": "${AWS::StackId}", "RequestId": "scheduled", "LogicalResourceId": "ScheduledRefresh", "ResponseURL": "https://localhost"}'
+
+  AlarmRefreshPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref MSKAlarmManagerFunction
+      Action: lambda:InvokeFunction
+      Principal: events.amazonaws.com
+      SourceArn: !GetAtt AlarmRefreshSchedule.Arn
+
+Outputs:
+  SNSTopicArn:
+    Description: ARN of the SNS topic used for alarm notifications
+    Value: !If
+      - UseExistingSNSTopic
+      - !Ref ExistingSNSTopicArn
+      - !If
+        - CreateSNSTopic
+        - !Ref AlarmSNSTopic
+        - 'No notification target configured'
+
+  DiscoveredClusters:
+    Description: Number of clusters discovered matching tags
+    Value: !GetAtt MSKAlarmDeployment.ClustersFound
+
+  AlarmsCreated:
+    Description: Total number of alarms created
+    Value: !GetAtt MSKAlarmDeployment.AlarmsCreated
+
+  ClusterNames:
+    Description: Comma-separated list of cluster names with alarms
+    Value: !GetAtt MSKAlarmDeployment.ClusterNames
+
+  LambdaFunctionArn:
+    Description: ARN of the alarm manager Lambda function
+    Value: !GetAtt MSKAlarmManagerFunction.Arn

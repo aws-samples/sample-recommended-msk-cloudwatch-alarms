@@ -1,0 +1,4 @@
+templates:
+  - templates/*.yaml
+ignore_checks:
+  - W3002  # Ignore inline code size warnings (Lambda ZipFile)

@@ -1,0 +1,723 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: >
+  Production-ready CloudWatch alarms for Amazon MSK clusters.
+  Deploys recommended alarms for a specific cluster identified by ARN.
+  Creates per-broker alarms for broker-level metrics using the correct
+  CloudWatch dimensions (Cluster Name, Broker ID).
+  Based on AWS best practices: https://docs.aws.amazon.com/msk/latest/developerguide/bestpractices.html
+
+Metadata:
+  AWS::CloudFormation::Interface:
+    ParameterGroups:
+      - Label:
+          default: MSK Cluster Configuration
+        Parameters:
+          - ClusterName
+          - ClusterArn
+          - NumberOfBrokers
+      - Label:
+          default: Notification Configuration
+        Parameters:
+          - NotificationEmail
+          - ExistingSNSTopicArn
+      - Label:
+          default: Alarm Thresholds
+        Parameters:
+          - CPUThreshold
+          - HeapMemoryThreshold
+          - DiskUsageThreshold
+      - Label:
+          default: Optional Alarms
+        Parameters:
+          - EnableConnectionAlarms
+          - EnableNetworkAlarms
+          - EnableTrafficShapingAlarms
+          - EnableConsumerLagAlarms
+          - ConsumerLagThreshold
+
+Parameters:
+  ClusterName:
+    Type: String
+    Description: Name of the Amazon MSK cluster
+    AllowedPattern: ^[a-zA-Z0-9\-]+$
+    ConstraintDescription: Cluster name must contain only alphanumeric characters and hyphens
+
+  ClusterArn:
+    Type: String
+    Description: Full ARN of the Amazon MSK cluster
+    AllowedPattern: ^arn:aws[\w-]*:kafka:[\w-]+:\d{12}:cluster\/[\w\-]+\/[\w\-]+$
+    ConstraintDescription: Must be a valid MSK cluster ARN
+
+  NumberOfBrokers:
+    Type: Number
+    Default: 3
+    MinValue: 1
+    MaxValue: 15
+    Description: >
+      Number of brokers in the MSK cluster (1-15).
+      Per-broker alarms are created for brokers 1 through this number.
+
+  NotificationEmail:
+    Type: String
+    Default: ''
+    Description: Email address for alarm notifications (leave empty if using ExistingSNSTopicArn)
+
+  ExistingSNSTopicArn:
+    Type: String
+    Default: ''
+    Description: ARN of an existing SNS topic for alarm notifications (overrides NotificationEmail)
+
+  CPUThreshold:
+    Type: Number
+    Default: 60
+    MinValue: 1
+    MaxValue: 100
+    Description: CPU utilization alarm threshold (percentage). AWS recommends keeping total CPU under 60%.
+
+  HeapMemoryThreshold:
+    Type: Number
+    Default: 60
+    MinValue: 1
+    MaxValue: 100
+    Description: Heap memory after GC alarm threshold (percentage). Alert before OOM risk.
+
+  DiskUsageThreshold:
+    Type: Number
+    Default: 85
+    MinValue: 1
+    MaxValue: 100
+    Description: Kafka data logs disk usage alarm threshold (percentage).
+
+  EnableConnectionAlarms:
+    Type: String
+    Default: 'true'
+    AllowedValues: ['true', 'false']
+    Description: Enable IAM connection limit alarms
+
+  EnableNetworkAlarms:
+    Type: String
+    Default: 'true'
+    AllowedValues: ['true', 'false']
+    Description: Enable network error alarms
+
+  EnableTrafficShapingAlarms:
+    Type: String
+    Default: 'true'
+    AllowedValues: ['true', 'false']
+    Description: Enable traffic shaping (network throttling) alarms
+
+  EnableConsumerLagAlarms:
+    Type: String
+    Default: 'false'
+    AllowedValues: ['true', 'false']
+    Description: Enable consumer lag alarms (requires PER_TOPIC_PER_BROKER monitoring level)
+
+  ConsumerLagThreshold:
+    Type: Number
+    Default: 1000
+    MinValue: 1
+    Description: Maximum offset lag threshold for consumer lag alarm
+
+Conditions:
+  CreateSNSTopic: !And
+    - !Equals [!Ref ExistingSNSTopicArn, '']
+    - !Not [!Equals [!Ref NotificationEmail, '']]
+  UseExistingSNSTopic: !Not [!Equals [!Ref ExistingSNSTopicArn, '']]
+
+Resources:
+  # ============================================================
+  # SNS Topic for Alarm Notifications
+  # ============================================================
+  AlarmSNSTopic:
+    Type: AWS::SNS::Topic
+    Condition: CreateSNSTopic
+    Properties:
+      TopicName: !Sub 'MSK-Alarms-${ClusterName}'
+      DisplayName: !Sub 'MSK Alarms - ${ClusterName}'
+      Tags:
+        - Key: Purpose
+          Value: MSKMonitoring
+        - Key: ClusterName
+          Value: !Ref ClusterName
+
+  AlarmSNSSubscription:
+    Type: AWS::SNS::Subscription
+    Condition: CreateSNSTopic
+    Properties:
+      TopicArn: !Ref AlarmSNSTopic
+      Protocol: email
+      Endpoint: !Ref NotificationEmail
+
+  # ============================================================
+  # Lambda Function to Create Per-Broker Alarms
+  # ============================================================
+  AlarmCreatorRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: CloudWatchAlarmManagement
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - cloudwatch:PutMetricAlarm
+                  - cloudwatch:DeleteAlarms
+                  - cloudwatch:DescribeAlarms
+                  - cloudwatch:ListTagsForResource
+                  - cloudwatch:TagResource
+                Resource: !Sub 'arn:aws:cloudwatch:${AWS::Region}:${AWS::AccountId}:alarm:MSK-${ClusterName}-*'
+
+  AlarmCreatorFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      Runtime: python3.12
+      Handler: index.handler
+      Timeout: 300
+      MemorySize: 256
+      Role: !GetAtt AlarmCreatorRole.Arn
+      Environment:
+        Variables:
+          CLUSTER_NAME: !Ref ClusterName
+          CLUSTER_ARN: !Ref ClusterArn
+          NUMBER_OF_BROKERS: !Ref NumberOfBrokers
+          CPU_THRESHOLD: !Ref CPUThreshold
+          HEAP_MEMORY_THRESHOLD: !Ref HeapMemoryThreshold
+          DISK_USAGE_THRESHOLD: !Ref DiskUsageThreshold
+          ENABLE_CONNECTION_ALARMS: !Ref EnableConnectionAlarms
+          ENABLE_NETWORK_ALARMS: !Ref EnableNetworkAlarms
+          ENABLE_TRAFFIC_SHAPING_ALARMS: !Ref EnableTrafficShapingAlarms
+          ENABLE_CONSUMER_LAG_ALARMS: !Ref EnableConsumerLagAlarms
+          CONSUMER_LAG_THRESHOLD: !Ref ConsumerLagThreshold
+          SNS_TOPIC_ARN: !If
+            - UseExistingSNSTopic
+            - !Ref ExistingSNSTopicArn
+            - !If
+              - CreateSNSTopic
+              - !Ref AlarmSNSTopic
+              - ''
+          STACK_NAME: !Ref AWS::StackName
+      Code:
+        ZipFile: |
+          import json
+          import os
+          import boto3
+          import cfnresponse
+          import logging
+
+          logger = logging.getLogger()
+          logger.setLevel(logging.INFO)
+
+          cloudwatch = boto3.client('cloudwatch')
+
+
+          def create_alarms(cluster_name, num_brokers, sns_topic_arn, config, stack_name):
+              """Create all CloudWatch alarms for the MSK cluster."""
+              alarm_actions = [sns_topic_arn] if sns_topic_arn else []
+              tags = [
+                  {'Key': 'ManagedBy', 'Value': stack_name},
+                  {'Key': 'MSKCluster', 'Value': cluster_name}
+              ]
+              alarms_created = []
+
+              # =====================================================
+              # CLUSTER-LEVEL ALARMS (dimension: Cluster Name only)
+              # =====================================================
+              cluster_alarms = [
+                  {
+                      'name': f'MSK-{cluster_name}-ActiveControllerCount',
+                      'description': (
+                          'CRITICAL: Active controller count is not 1. '
+                          'Only one controller should be active at any time. '
+                          'Deviation implies cluster instability.'
+                      ),
+                      'metric': 'ActiveControllerCount',
+                      'statistic': 'Sum',
+                      'period': 60,
+                      'eval_periods': 1,
+                      'datapoints': 1,
+                      'threshold': 1,
+                      'comparison': 'LessThanThreshold',
+                      'treat_missing': 'breaching',
+                  },
+                  {
+                      'name': f'MSK-{cluster_name}-OfflinePartitionsCount',
+                      'description': (
+                          'CRITICAL: Cluster has offline partitions. '
+                          'No active leader exists for these partitions. '
+                          'Data is temporarily unavailable.'
+                      ),
+                      'metric': 'OfflinePartitionsCount',
+                      'statistic': 'Sum',
+                      'period': 300,
+                      'eval_periods': 1,
+                      'datapoints': 1,
+                      'threshold': 0,
+                      'comparison': 'GreaterThanThreshold',
+                      'treat_missing': 'notBreaching',
+                  },
+              ]
+
+              for alarm in cluster_alarms:
+                  try:
+                      cloudwatch.put_metric_alarm(
+                          AlarmName=alarm['name'],
+                          AlarmDescription=alarm['description'],
+                          Namespace='AWS/Kafka',
+                          MetricName=alarm['metric'],
+                          Dimensions=[
+                              {'Name': 'Cluster Name', 'Value': cluster_name}
+                          ],
+                          Statistic=alarm['statistic'],
+                          Period=alarm['period'],
+                          EvaluationPeriods=alarm['eval_periods'],
+                          DatapointsToAlarm=alarm['datapoints'],
+                          Threshold=alarm['threshold'],
+                          ComparisonOperator=alarm['comparison'],
+                          TreatMissingData=alarm['treat_missing'],
+                          AlarmActions=alarm_actions,
+                          OKActions=alarm_actions,
+                          Tags=tags
+                      )
+                      alarms_created.append(alarm['name'])
+                  except Exception as e:
+                      logger.error(f"Failed: {alarm['name']}: {e}")
+
+              # =====================================================
+              # PER-BROKER ALARMS (dimensions: Cluster Name, Broker ID)
+              # =====================================================
+              for broker_id in range(1, num_brokers + 1):
+                  broker_dims = [
+                      {'Name': 'Cluster Name', 'Value': cluster_name},
+                      {'Name': 'Broker ID', 'Value': str(broker_id)}
+                  ]
+
+                  # --- CPU Utilization (metric math: CpuUser + CpuSystem) ---
+                  cpu_alarm_name = f'MSK-{cluster_name}-Broker{broker_id}-CPUUtilization'
+                  try:
+                      cloudwatch.put_metric_alarm(
+                          AlarmName=cpu_alarm_name,
+                          AlarmDescription=(
+                              f'WARNING: Broker {broker_id} CPU (CpuUser + CpuSystem) '
+                              f'exceeds {config["cpu_threshold"]}%. '
+                              f'Consider scaling the cluster.'
+                          ),
+                          Metrics=[
+                              {
+                                  'Id': 'cpu_user',
+                                  'MetricStat': {
+                                      'Metric': {
+                                          'Namespace': 'AWS/Kafka',
+                                          'MetricName': 'CpuUser',
+                                          'Dimensions': broker_dims
+                                      },
+                                      'Period': 300,
+                                      'Stat': 'Average'
+                                  },
+                                  'ReturnData': False
+                              },
+                              {
+                                  'Id': 'cpu_system',
+                                  'MetricStat': {
+                                      'Metric': {
+                                          'Namespace': 'AWS/Kafka',
+                                          'MetricName': 'CpuSystem',
+                                          'Dimensions': broker_dims
+                                      },
+                                      'Period': 300,
+                                      'Stat': 'Average'
+                                  },
+                                  'ReturnData': False
+                              },
+                              {
+                                  'Id': 'total_cpu',
+                                  'Expression': 'cpu_user + cpu_system',
+                                  'Label': f'Broker {broker_id} Total CPU',
+                                  'ReturnData': True
+                              }
+                          ],
+                          EvaluationPeriods=3,
+                          DatapointsToAlarm=3,
+                          Threshold=float(config['cpu_threshold']),
+                          ComparisonOperator='GreaterThanThreshold',
+                          TreatMissingData='notBreaching',
+                          AlarmActions=alarm_actions,
+                          OKActions=alarm_actions,
+                          Tags=tags
+                      )
+                      alarms_created.append(cpu_alarm_name)
+                  except Exception as e:
+                      logger.error(f"Failed: {cpu_alarm_name}: {e}")
+
+                  # --- Standard per-broker alarms ---
+                  broker_alarms = [
+                      {
+                          'name': f'MSK-{cluster_name}-Broker{broker_id}-HeapMemoryAfterGC',
+                          'description': (
+                              f'WARNING: Broker {broker_id} heap memory after GC '
+                              f'exceeds {config["heap_memory_threshold"]}%. '
+                              f'Risk of OOM.'
+                          ),
+                          'metric': 'HeapMemoryAfterGC',
+                          'statistic': 'Maximum',
+                          'period': 300,
+                          'eval_periods': 3,
+                          'datapoints': 3,
+                          'threshold': float(config['heap_memory_threshold']),
+                          'comparison': 'GreaterThanThreshold',
+                          'treat_missing': 'notBreaching',
+                          'enabled': True,
+                      },
+                      {
+                          'name': f'MSK-{cluster_name}-Broker{broker_id}-KafkaDataLogsDiskUsed',
+                          'description': (
+                              f'HIGH: Broker {broker_id} disk usage '
+                              f'exceeds {config["disk_usage_threshold"]}%. '
+                              f'Risk of data loss if disk fills.'
+                          ),
+                          'metric': 'KafkaDataLogsDiskUsed',
+                          'statistic': 'Maximum',
+                          'period': 300,
+                          'eval_periods': 1,
+                          'datapoints': 1,
+                          'threshold': float(config['disk_usage_threshold']),
+                          'comparison': 'GreaterThanOrEqualToThreshold',
+                          'treat_missing': 'notBreaching',
+                          'enabled': True,
+                      },
+                      {
+                          'name': f'MSK-{cluster_name}-Broker{broker_id}-UnderReplicatedPartitions',
+                          'description': (
+                              f'HIGH: Broker {broker_id} has under-replicated partitions. '
+                              f'Not all replicas are caught up.'
+                          ),
+                          'metric': 'UnderReplicatedPartitions',
+                          'statistic': 'Maximum',
+                          'period': 300,
+                          'eval_periods': 3,
+                          'datapoints': 3,
+                          'threshold': 0,
+                          'comparison': 'GreaterThanThreshold',
+                          'treat_missing': 'notBreaching',
+                          'enabled': True,
+                      },
+                      {
+                          'name': f'MSK-{cluster_name}-Broker{broker_id}-UnderMinIsrPartitionCount',
+                          'description': (
+                              f'HIGH: Broker {broker_id} has partitions below min ISR. '
+                              f'Potential data loss risk.'
+                          ),
+                          'metric': 'UnderMinIsrPartitionCount',
+                          'statistic': 'Maximum',
+                          'period': 300,
+                          'eval_periods': 1,
+                          'datapoints': 1,
+                          'threshold': 0,
+                          'comparison': 'GreaterThanThreshold',
+                          'treat_missing': 'notBreaching',
+                          'enabled': True,
+                      },
+                      {
+                          'name': f'MSK-{cluster_name}-Broker{broker_id}-TrafficShaping',
+                          'description': (
+                              f'CRITICAL: Broker {broker_id} experiencing network throttling. '
+                              f'Packets being dropped or queued.'
+                          ),
+                          'metric': 'TrafficShaping',
+                          'statistic': 'Sum',
+                          'period': 60,
+                          'eval_periods': 1,
+                          'datapoints': 1,
+                          'threshold': 0,
+                          'comparison': 'GreaterThanThreshold',
+                          'treat_missing': 'notBreaching',
+                          'enabled': config['enable_traffic_shaping'],
+                      },
+                      {
+                          'name': f'MSK-{cluster_name}-Broker{broker_id}-BwInAllowanceExceeded',
+                          'description': (
+                              f'HIGH: Broker {broker_id} inbound bandwidth exceeded maximum.'
+                          ),
+                          'metric': 'BwInAllowanceExceeded',
+                          'statistic': 'Sum',
+                          'period': 300,
+                          'eval_periods': 1,
+                          'datapoints': 1,
+                          'threshold': 0,
+                          'comparison': 'GreaterThanThreshold',
+                          'treat_missing': 'notBreaching',
+                          'enabled': config['enable_traffic_shaping'],
+                      },
+                      {
+                          'name': f'MSK-{cluster_name}-Broker{broker_id}-BwOutAllowanceExceeded',
+                          'description': (
+                              f'HIGH: Broker {broker_id} outbound bandwidth exceeded maximum.'
+                          ),
+                          'metric': 'BwOutAllowanceExceeded',
+                          'statistic': 'Sum',
+                          'period': 300,
+                          'eval_periods': 1,
+                          'datapoints': 1,
+                          'threshold': 0,
+                          'comparison': 'GreaterThanThreshold',
+                          'treat_missing': 'notBreaching',
+                          'enabled': config['enable_traffic_shaping'],
+                      },
+                      {
+                          'name': f'MSK-{cluster_name}-Broker{broker_id}-NetworkRxErrors',
+                          'description': (
+                              f'WARNING: Broker {broker_id} has network receive errors.'
+                          ),
+                          'metric': 'NetworkRxErrors',
+                          'statistic': 'Sum',
+                          'period': 300,
+                          'eval_periods': 1,
+                          'datapoints': 1,
+                          'threshold': 0,
+                          'comparison': 'GreaterThanThreshold',
+                          'treat_missing': 'notBreaching',
+                          'enabled': config['enable_network'],
+                      },
+                      {
+                          'name': f'MSK-{cluster_name}-Broker{broker_id}-NetworkTxErrors',
+                          'description': (
+                              f'WARNING: Broker {broker_id} has network transmit errors.'
+                          ),
+                          'metric': 'NetworkTxErrors',
+                          'statistic': 'Sum',
+                          'period': 300,
+                          'eval_periods': 1,
+                          'datapoints': 1,
+                          'threshold': 0,
+                          'comparison': 'GreaterThanThreshold',
+                          'treat_missing': 'notBreaching',
+                          'enabled': config['enable_network'],
+                      },
+                      {
+                          'name': f'MSK-{cluster_name}-Broker{broker_id}-VolumeQueueLength',
+                          'description': (
+                              f'WARNING: Broker {broker_id} EBS volume queue length elevated. '
+                              f'Possible disk I/O bottleneck.'
+                          ),
+                          'metric': 'VolumeQueueLength',
+                          'statistic': 'Average',
+                          'period': 300,
+                          'eval_periods': 3,
+                          'datapoints': 3,
+                          'threshold': 10,
+                          'comparison': 'GreaterThanThreshold',
+                          'treat_missing': 'notBreaching',
+                          'enabled': True,
+                      },
+                      {
+                          'name': f'MSK-{cluster_name}-Broker{broker_id}-IAMTooManyConnections',
+                          'description': (
+                              f'WARNING: Broker {broker_id} exceeded IAM connection limit (100). '
+                              f'New connections blocked.'
+                          ),
+                          'metric': 'IAMTooManyConnections',
+                          'statistic': 'Sum',
+                          'period': 300,
+                          'eval_periods': 1,
+                          'datapoints': 1,
+                          'threshold': 0,
+                          'comparison': 'GreaterThanThreshold',
+                          'treat_missing': 'notBreaching',
+                          'enabled': config['enable_connection'],
+                      },
+                  ]
+
+                  for alarm in broker_alarms:
+                      if not alarm['enabled']:
+                          continue
+                      try:
+                          cloudwatch.put_metric_alarm(
+                              AlarmName=alarm['name'],
+                              AlarmDescription=alarm['description'],
+                              Namespace='AWS/Kafka',
+                              MetricName=alarm['metric'],
+                              Dimensions=broker_dims,
+                              Statistic=alarm['statistic'],
+                              Period=alarm['period'],
+                              EvaluationPeriods=alarm['eval_periods'],
+                              DatapointsToAlarm=alarm['datapoints'],
+                              Threshold=alarm['threshold'],
+                              ComparisonOperator=alarm['comparison'],
+                              TreatMissingData=alarm['treat_missing'],
+                              AlarmActions=alarm_actions,
+                              OKActions=alarm_actions,
+                              Tags=tags
+                          )
+                          alarms_created.append(alarm['name'])
+                      except Exception as e:
+                          logger.error(f"Failed: {alarm['name']}: {e}")
+
+              # =====================================================
+              # CONSUMER LAG ALARM (cluster-level, optional)
+              # =====================================================
+              if config['enable_consumer_lag']:
+                  lag_alarm_name = f'MSK-{cluster_name}-MaxOffsetLag'
+                  try:
+                      cloudwatch.put_metric_alarm(
+                          AlarmName=lag_alarm_name,
+                          AlarmDescription=(
+                              f'WARNING: Consumer lag exceeds {config["consumer_lag_threshold"]}. '
+                              f'Consumers falling behind producers.'
+                          ),
+                          Namespace='AWS/Kafka',
+                          MetricName='MaxOffsetLag',
+                          Dimensions=[
+                              {'Name': 'Cluster Name', 'Value': cluster_name}
+                          ],
+                          Statistic='Maximum',
+                          Period=300,
+                          EvaluationPeriods=3,
+                          DatapointsToAlarm=3,
+                          Threshold=float(config['consumer_lag_threshold']),
+                          ComparisonOperator='GreaterThanThreshold',
+                          TreatMissingData='notBreaching',
+                          AlarmActions=alarm_actions,
+                          OKActions=alarm_actions,
+                          Tags=tags
+                      )
+                      alarms_created.append(lag_alarm_name)
+                  except Exception as e:
+                      logger.error(f"Failed: {lag_alarm_name}: {e}")
+
+              return alarms_created
+
+
+          def delete_alarms(cluster_name, stack_name):
+              """Delete all alarms managed by this stack."""
+              try:
+                  paginator = cloudwatch.get_paginator('describe_alarms')
+                  alarms_to_delete = []
+
+                  for page in paginator.paginate(AlarmNamePrefix=f'MSK-{cluster_name}-'):
+                      for alarm in page.get('MetricAlarms', []):
+                          try:
+                              tags_resp = cloudwatch.list_tags_for_resource(
+                                  ResourceARN=alarm['AlarmArn']
+                              )
+                              tags = {t['Key']: t['Value'] for t in tags_resp.get('Tags', [])}
+                              if tags.get('ManagedBy') == stack_name:
+                                  alarms_to_delete.append(alarm['AlarmName'])
+                          except Exception:
+                              pass
+
+                  if alarms_to_delete:
+                      for i in range(0, len(alarms_to_delete), 100):
+                          batch = alarms_to_delete[i:i+100]
+                          cloudwatch.delete_alarms(AlarmNames=batch)
+                          logger.info(f"Deleted {len(batch)} alarms")
+
+                  return alarms_to_delete
+              except Exception as e:
+                  logger.error(f"Error deleting alarms: {e}")
+                  return []
+
+
+          def handler(event, context):
+              """CloudFormation custom resource handler."""
+              logger.info(f"Event: {json.dumps(event)}")
+              request_type = event['RequestType']
+
+              try:
+                  cluster_name = os.environ['CLUSTER_NAME']
+                  num_brokers = int(os.environ['NUMBER_OF_BROKERS'])
+                  sns_topic_arn = os.environ.get('SNS_TOPIC_ARN', '')
+                  stack_name = os.environ['STACK_NAME']
+
+                  config = {
+                      'cpu_threshold': os.environ.get('CPU_THRESHOLD', '60'),
+                      'heap_memory_threshold': os.environ.get('HEAP_MEMORY_THRESHOLD', '60'),
+                      'disk_usage_threshold': os.environ.get('DISK_USAGE_THRESHOLD', '85'),
+                      'enable_traffic_shaping': os.environ.get('ENABLE_TRAFFIC_SHAPING_ALARMS', 'true') == 'true',
+                      'enable_network': os.environ.get('ENABLE_NETWORK_ALARMS', 'true') == 'true',
+                      'enable_connection': os.environ.get('ENABLE_CONNECTION_ALARMS', 'true') == 'true',
+                      'enable_consumer_lag': os.environ.get('ENABLE_CONSUMER_LAG_ALARMS', 'false') == 'true',
+                      'consumer_lag_threshold': os.environ.get('CONSUMER_LAG_THRESHOLD', '1000'),
+                  }
+
+                  if request_type in ['Create', 'Update']:
+                      if request_type == 'Update':
+                          logger.info("Cleaning up existing alarms before update...")
+                          delete_alarms(cluster_name, stack_name)
+
+                      alarms = create_alarms(cluster_name, num_brokers, sns_topic_arn, config, stack_name)
+                      logger.info(f"Created {len(alarms)} alarms for {num_brokers} brokers")
+
+                      cfnresponse.send(event, context, cfnresponse.SUCCESS, {
+                          'AlarmsCreated': str(len(alarms)),
+                          'BrokersMonitored': str(num_brokers),
+                          'ClusterName': cluster_name
+                      })
+
+                  elif request_type == 'Delete':
+                      deleted = delete_alarms(cluster_name, stack_name)
+                      logger.info(f"Deleted {len(deleted)} alarms")
+                      cfnresponse.send(event, context, cfnresponse.SUCCESS, {
+                          'AlarmsDeleted': str(len(deleted))
+                      })
+
+              except Exception as e:
+                  logger.error(f"Error: {e}", exc_info=True)
+                  cfnresponse.send(event, context, cfnresponse.FAILED, {
+                      'Error': str(e)
+                  })
+
+  # ============================================================
+  # Custom Resource to Trigger Alarm Creation
+  # ============================================================
+  MSKAlarmDeployment:
+    Type: Custom::MSKAlarms
+    Properties:
+      ServiceToken: !GetAtt AlarmCreatorFunction.Arn
+      # Include parameters to trigger update on any change
+      ClusterName: !Ref ClusterName
+      ClusterArn: !Ref ClusterArn
+      NumberOfBrokers: !Ref NumberOfBrokers
+      CPUThreshold: !Ref CPUThreshold
+      HeapMemoryThreshold: !Ref HeapMemoryThreshold
+      DiskUsageThreshold: !Ref DiskUsageThreshold
+      EnableConnectionAlarms: !Ref EnableConnectionAlarms
+      EnableNetworkAlarms: !Ref EnableNetworkAlarms
+      EnableTrafficShapingAlarms: !Ref EnableTrafficShapingAlarms
+      EnableConsumerLagAlarms: !Ref EnableConsumerLagAlarms
+      ConsumerLagThreshold: !Ref ConsumerLagThreshold
+
+Outputs:
+  SNSTopicArn:
+    Description: ARN of the SNS topic used for alarm notifications
+    Value: !If
+      - UseExistingSNSTopic
+      - !Ref ExistingSNSTopicArn
+      - !If
+        - CreateSNSTopic
+        - !Ref AlarmSNSTopic
+        - 'No notification target configured'
+
+  ClusterArn:
+    Description: ARN of the monitored MSK cluster
+    Value: !Ref ClusterArn
+
+  AlarmsCreated:
+    Description: Total number of alarms created
+    Value: !GetAtt MSKAlarmDeployment.AlarmsCreated
+
+  BrokersMonitored:
+    Description: Number of brokers with per-broker alarms
+    Value: !GetAtt MSKAlarmDeployment.BrokersMonitored
+
+  AlarmDashboardURL:
+    Description: URL to view the alarms in CloudWatch console
+    Value: !Sub 'https://${AWS::Region}.console.aws.amazon.com/cloudwatch/home?region=${AWS::Region}#alarmsV2:?~(search~(query~(source~(alarmName~(value~(prefix~(0~%27MSK-${ClusterName})))))(sort~(column~%27default)(direction~%27desc))))'
