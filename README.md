@@ -2,6 +2,8 @@
 
 This sample code repository provides AWS CloudFormation templates for deploying production-ready Amazon CloudWatch alarms for Amazon Managed Streaming for Apache Kafka (Amazon MSK) clusters. The templates create per-broker and cluster-level alarms based on AWS best practices as outlined in the [MSK Best Practices documentation](https://docs.aws.amazon.com/msk/latest/developerguide/bestpractices.html) and the AWS Big Data Blog post [Set up production-ready monitoring for Amazon MSK using CloudWatch alarms](https://aws.amazon.com/blogs/big-data/set-up-production-ready-monitoring-for-amazon-msk-using-cloudwatch-alarms/).
 
+> **Note:** These templates are designed for **MSK Provisioned (Standard) brokers** only. They are not applicable to MSK Serverless or MSK Express broker types, which have different metric sets and dimensions.
+
 ## Features
 
 - **Two deployment modes:**
@@ -227,7 +229,6 @@ After deployment, check your email for an SNS subscription confirmation message 
 | Network Rx Errors | `NetworkRxErrors` | > 0 for 5 min | Warning |
 | Network Tx Errors | `NetworkTxErrors` | > 0 for 5 min | Warning |
 | IAM Too Many Connections | `IAMTooManyConnections` | > 0 for 5 min | Warning |
-| Consumer Lag (optional) | `MaxOffsetLag` | > 1000 for 15 min | Warning |
 
 ## Customizing Thresholds
 

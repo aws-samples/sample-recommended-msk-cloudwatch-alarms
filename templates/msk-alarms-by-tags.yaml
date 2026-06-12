@@ -147,7 +147,7 @@ Resources:
                   - kafka:ListClustersV2
                   - kafka:ListTagsForResource
                   - kafka:DescribeClusterV2
-                Resource: '*'
+                Resource: !Sub 'arn:aws:kafka:${AWS::Region}:${AWS::AccountId}:*'
               - Effect: Allow
                 Action:
                   - cloudwatch:PutMetricAlarm
@@ -344,6 +344,20 @@ Resources:
               return len(alarms_to_delete)
 
 
+          def is_cfn_invocation(event):
+              """Check if this is a real CloudFormation invocation vs scheduled."""
+              response_url = event.get('ResponseURL', '')
+              return response_url.startswith('https://cloudformation')
+
+
+          def send_response(event, context, status, response_data):
+              """Send response only for real CFN invocations."""
+              if is_cfn_invocation(event):
+                  cfnresponse.send(event, context, status, response_data)
+              else:
+                  logger.info(f"Scheduled invocation result: {response_data}")
+
+
           def handler(event, context):
               """CloudFormation custom resource handler."""
               logger.info(f"Event: {json.dumps(event)}")
@@ -380,7 +394,7 @@ Resources:
                           total_alarms += n
                           cluster_names.append(c['name'])
 
-                      cfnresponse.send(event, context, cfnresponse.SUCCESS, {
+                      send_response(event, context, cfnresponse.SUCCESS, {
                           'ClustersFound': str(len(clusters)),
                           'AlarmsCreated': str(total_alarms),
                           'ClusterNames': ','.join(cluster_names) if cluster_names else 'none'
@@ -388,13 +402,13 @@ Resources:
 
                   elif request_type == 'Delete':
                       deleted = delete_alarms_for_stack(stack_name)
-                      cfnresponse.send(event, context, cfnresponse.SUCCESS, {
+                      send_response(event, context, cfnresponse.SUCCESS, {
                           'AlarmsDeleted': str(deleted)
                       })
 
               except Exception as e:
                   logger.error(f"Error: {e}", exc_info=True)
-                  cfnresponse.send(event, context, cfnresponse.FAILED, {'Error': str(e)})
+                  send_response(event, context, cfnresponse.FAILED, {'Error': str(e)})
 
   # ============================================================
   # Custom Resource to Trigger Lambda
@@ -444,6 +458,16 @@ Outputs:
         - CreateSNSTopic
         - !Ref AlarmSNSTopic
         - 'No notification target configured'
+
+  NotificationWarning:
+    Description: WARNING - Check if alarm notifications are configured
+    Value: !If
+      - UseExistingSNSTopic
+      - 'OK - Using existing SNS topic'
+      - !If
+        - CreateSNSTopic
+        - 'OK - SNS topic created, confirm email subscription'
+        - 'WARNING: No NotificationEmail or ExistingSNSTopicArn provided. Alarms will trigger but NOT send notifications.'
 
   DiscoveredClusters:
     Description: Number of clusters discovered matching tags

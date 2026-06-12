@@ -32,8 +32,6 @@ Metadata:
           - EnableConnectionAlarms
           - EnableNetworkAlarms
           - EnableTrafficShapingAlarms
-          - EnableConsumerLagAlarms
-          - ConsumerLagThreshold
 
 Parameters:
   ClusterName:
@@ -105,18 +103,6 @@ Parameters:
     Default: 'true'
     AllowedValues: ['true', 'false']
     Description: Enable traffic shaping (network throttling) alarms
-
-  EnableConsumerLagAlarms:
-    Type: String
-    Default: 'false'
-    AllowedValues: ['true', 'false']
-    Description: Enable consumer lag alarms (requires PER_TOPIC_PER_BROKER monitoring level)
-
-  ConsumerLagThreshold:
-    Type: Number
-    Default: 1000
-    MinValue: 1
-    Description: Maximum offset lag threshold for consumer lag alarm
 
 Conditions:
   CreateSNSTopic: !And
@@ -196,8 +182,6 @@ Resources:
           ENABLE_CONNECTION_ALARMS: !Ref EnableConnectionAlarms
           ENABLE_NETWORK_ALARMS: !Ref EnableNetworkAlarms
           ENABLE_TRAFFIC_SHAPING_ALARMS: !Ref EnableTrafficShapingAlarms
-          ENABLE_CONSUMER_LAG_ALARMS: !Ref EnableConsumerLagAlarms
-          CONSUMER_LAG_THRESHOLD: !Ref ConsumerLagThreshold
           SNS_TOPIC_ARN: !If
             - UseExistingSNSTopic
             - !Ref ExistingSNSTopicArn
@@ -561,37 +545,6 @@ Resources:
                       except Exception as e:
                           logger.error(f"Failed: {alarm['name']}: {e}")
 
-              # =====================================================
-              # CONSUMER LAG ALARM (cluster-level, optional)
-              # =====================================================
-              if config['enable_consumer_lag']:
-                  lag_alarm_name = f'MSK-{cluster_name}-MaxOffsetLag'
-                  try:
-                      cloudwatch.put_metric_alarm(
-                          AlarmName=lag_alarm_name,
-                          AlarmDescription=(
-                              f'WARNING: Consumer lag exceeds {config["consumer_lag_threshold"]}. '
-                              f'Consumers falling behind producers.'
-                          ),
-                          Namespace='AWS/Kafka',
-                          MetricName='MaxOffsetLag',
-                          Dimensions=[
-                              {'Name': 'Cluster Name', 'Value': cluster_name}
-                          ],
-                          Statistic='Maximum',
-                          Period=300,
-                          EvaluationPeriods=3,
-                          DatapointsToAlarm=3,
-                          Threshold=float(config['consumer_lag_threshold']),
-                          ComparisonOperator='GreaterThanThreshold',
-                          TreatMissingData='notBreaching',
-                          AlarmActions=alarm_actions,
-                          OKActions=alarm_actions,
-                          Tags=tags
-                      )
-                      alarms_created.append(lag_alarm_name)
-                  except Exception as e:
-                      logger.error(f"Failed: {lag_alarm_name}: {e}")
 
               return alarms_created
 
@@ -644,8 +597,6 @@ Resources:
                       'enable_traffic_shaping': os.environ.get('ENABLE_TRAFFIC_SHAPING_ALARMS', 'true') == 'true',
                       'enable_network': os.environ.get('ENABLE_NETWORK_ALARMS', 'true') == 'true',
                       'enable_connection': os.environ.get('ENABLE_CONNECTION_ALARMS', 'true') == 'true',
-                      'enable_consumer_lag': os.environ.get('ENABLE_CONSUMER_LAG_ALARMS', 'false') == 'true',
-                      'consumer_lag_threshold': os.environ.get('CONSUMER_LAG_THRESHOLD', '1000'),
                   }
 
                   if request_type in ['Create', 'Update']:
@@ -692,8 +643,6 @@ Resources:
       EnableConnectionAlarms: !Ref EnableConnectionAlarms
       EnableNetworkAlarms: !Ref EnableNetworkAlarms
       EnableTrafficShapingAlarms: !Ref EnableTrafficShapingAlarms
-      EnableConsumerLagAlarms: !Ref EnableConsumerLagAlarms
-      ConsumerLagThreshold: !Ref ConsumerLagThreshold
 
 Outputs:
   SNSTopicArn:
@@ -705,6 +654,16 @@ Outputs:
         - CreateSNSTopic
         - !Ref AlarmSNSTopic
         - 'No notification target configured'
+
+  NotificationWarning:
+    Description: WARNING - Check if alarm notifications are configured
+    Value: !If
+      - UseExistingSNSTopic
+      - 'OK - Using existing SNS topic'
+      - !If
+        - CreateSNSTopic
+        - 'OK - SNS topic created, confirm email subscription'
+        - 'WARNING: No NotificationEmail or ExistingSNSTopicArn provided. Alarms will trigger but NOT send notifications.'
 
   ClusterArn:
     Description: ARN of the monitored MSK cluster
