@@ -35,9 +35,10 @@ locals {
 resource "aws_sns_topic" "alarms" {
   count = var.existing_sns_topic_arn == "" && var.notification_email != "" ? 1 : 0
 
-  name         = "${local.alarm_prefix}-Alarms"
-  display_name = "MSK Alarms - ${var.cluster_name}"
-  tags         = local.common_tags
+  name              = "${local.alarm_prefix}-Alarms"
+  display_name      = "MSK Alarms - ${var.cluster_name}"
+  kms_master_key_id = "alias/aws/sns"
+  tags              = local.common_tags
 }
 
 resource "aws_sns_topic_subscription" "email" {

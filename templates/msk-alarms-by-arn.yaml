@@ -120,6 +120,7 @@ Resources:
     Properties:
       TopicName: !Sub 'MSK-Alarms-${ClusterName}'
       DisplayName: !Sub 'MSK Alarms - ${ClusterName}'
+      KmsMasterKeyId: alias/aws/sns
       Tags:
         - Key: Purpose
           Value: MSKMonitoring

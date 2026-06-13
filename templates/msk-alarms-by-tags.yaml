@@ -108,6 +108,7 @@ Resources:
     Properties:
       TopicName: !Sub 'MSK-Alarms-${TagKey}-${TagValue}'
       DisplayName: !Sub 'MSK Alarms - ${TagKey}:${TagValue}'
+      KmsMasterKeyId: alias/aws/sns
       Tags:
         - Key: Purpose
           Value: MSKMonitoring
@@ -366,7 +367,7 @@ Resources:
           def is_cfn_invocation(event):
               """Check if this is a real CloudFormation invocation vs scheduled."""
               response_url = event.get('ResponseURL', '')
-              return response_url.startswith('https://cloudformation')
+              return bool(response_url)
 
 
           def send_response(event, context, status, response_data):
@@ -457,7 +458,7 @@ Resources:
       Targets:
         - Id: MSKAlarmRefresh
           Arn: !GetAtt MSKAlarmManagerFunction.Arn
-          Input: !Sub '{"RequestType": "Update", "ResourceProperties": {}, "StackId": "${AWS::StackId}", "RequestId": "scheduled", "LogicalResourceId": "ScheduledRefresh", "ResponseURL": "https://localhost"}'
+          Input: !Sub '{"RequestType": "Update", "ResourceProperties": {}, "StackId": "${AWS::StackId}", "RequestId": "scheduled", "LogicalResourceId": "ScheduledRefresh", "ResponseURL": ""}'
 
   AlarmRefreshPermission:
     Type: AWS::Lambda::Permission
