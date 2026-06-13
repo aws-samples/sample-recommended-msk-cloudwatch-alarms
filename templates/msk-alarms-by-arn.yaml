@@ -660,8 +660,6 @@ Resources:
   # ============================================================
   MSKAlarmDeployment:
     Type: Custom::MSKAlarms
-    DependsOn:
-      - AlarmCreatorFunction
     Properties:
       ServiceToken: !GetAtt AlarmCreatorFunction.Arn
       # Include parameters to trigger update on any change
