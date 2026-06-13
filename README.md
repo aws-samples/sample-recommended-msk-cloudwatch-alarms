@@ -97,8 +97,9 @@ This sample code repository provides AWS CloudFormation templates for deploying 
 
 | Template | Description |
 |----------|-------------|
-| `templates/msk-alarms-by-arn.yaml` | Deploy alarms for a single MSK cluster identified by ARN |
-| `templates/msk-alarms-by-tags.yaml` | Deploy alarms using a Lambda-backed custom resource that discovers clusters by tags |
+| `templates/msk-alarms-by-arn.yaml` | CloudFormation: Deploy alarms for a single MSK cluster identified by ARN |
+| `templates/msk-alarms-by-tags.yaml` | CloudFormation: Deploy alarms using a Lambda-backed custom resource that discovers clusters by tags |
+| `terraform/` | Terraform: Deploy alarms for a single cluster — uses native `count` loops, no Lambda required |
 
 ## Prerequisites
 
