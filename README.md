@@ -1,4 +1,4 @@
-# Sample: Amazon MSK Recommended CloudWatch Alarms
+# Amazon MSK Recommended CloudWatch Alarms
 
 This sample code repository provides AWS CloudFormation templates for deploying recommended Amazon CloudWatch alarms for Amazon Managed Streaming for Apache Kafka (Amazon MSK) clusters. The templates create per-broker and cluster-level alarms based on AWS best practices as outlined in the [MSK Best Practices documentation](https://docs.aws.amazon.com/msk/latest/developerguide/bestpractices.html) and the AWS Big Data Blog post [Set up production-ready monitoring for Amazon MSK using CloudWatch alarms](https://aws.amazon.com/blogs/big-data/set-up-production-ready-monitoring-for-amazon-msk-using-cloudwatch-alarms/).
 
@@ -292,6 +292,10 @@ aws cloudformation wait stack-delete-complete --stack-name msk-alarms-prod-clust
 - **AWS Blog Post:** [Set up production-ready monitoring for Amazon MSK using CloudWatch alarms](https://aws.amazon.com/blogs/big-data/set-up-production-ready-monitoring-for-amazon-msk-using-cloudwatch-alarms/)
 - **MSK Best Practices:** [Amazon MSK Best Practices documentation](https://docs.aws.amazon.com/msk/latest/developerguide/bestpractices.html)
 - **MSK Metrics Reference:** [Amazon MSK metrics for monitoring Standard brokers](https://docs.aws.amazon.com/msk/latest/developerguide/metrics-details.html)
+
+## Disclaimer
+
+This is sample code intended for educational and reference purposes only. It is **not intended for direct production use** without thorough review by your security and operations teams. Before deploying in a production environment, review and customize IAM policies, KMS configurations, alarm thresholds, and notification settings to align with your organization's security requirements and operational standards, and validate this solution in a non-production environment first.
 
 ## Security
 

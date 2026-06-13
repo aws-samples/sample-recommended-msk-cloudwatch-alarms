@@ -4,6 +4,9 @@ NOTES-LOCAL-ONLY.md
 # Kiro
 .kiro/
 
+# Development scripts
+scripts/
+
 # OS files
 .DS_Store
 Thumbs.db
