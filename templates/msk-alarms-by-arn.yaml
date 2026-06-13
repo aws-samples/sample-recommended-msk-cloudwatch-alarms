@@ -1,6 +1,6 @@
 AWSTemplateFormatVersion: '2010-09-09'
 Description: >
-  Production-ready CloudWatch alarms for Amazon MSK clusters.
+  Recommended CloudWatch alarms for Amazon MSK clusters.
   Deploys recommended alarms for a specific cluster identified by ARN.
   Creates per-broker alarms for broker-level metrics using the correct
   CloudWatch dimensions (Cluster Name, Broker ID).

@@ -1,6 +1,6 @@
-# Sample Amazon MSK Production-Ready CloudWatch Alarms
+# Sample: Amazon MSK Recommended CloudWatch Alarms
 
-This sample code repository provides AWS CloudFormation templates for deploying production-ready Amazon CloudWatch alarms for Amazon Managed Streaming for Apache Kafka (Amazon MSK) clusters. The templates create per-broker and cluster-level alarms based on AWS best practices as outlined in the [MSK Best Practices documentation](https://docs.aws.amazon.com/msk/latest/developerguide/bestpractices.html) and the AWS Big Data Blog post [Set up production-ready monitoring for Amazon MSK using CloudWatch alarms](https://aws.amazon.com/blogs/big-data/set-up-production-ready-monitoring-for-amazon-msk-using-cloudwatch-alarms/).
+This sample code repository provides AWS CloudFormation templates for deploying recommended Amazon CloudWatch alarms for Amazon Managed Streaming for Apache Kafka (Amazon MSK) clusters. The templates create per-broker and cluster-level alarms based on AWS best practices as outlined in the [MSK Best Practices documentation](https://docs.aws.amazon.com/msk/latest/developerguide/bestpractices.html) and the AWS Big Data Blog post [Set up production-ready monitoring for Amazon MSK using CloudWatch alarms](https://aws.amazon.com/blogs/big-data/set-up-production-ready-monitoring-for-amazon-msk-using-cloudwatch-alarms/).
 
 > **Note:** These templates are designed for **MSK Provisioned (Standard) brokers** only. They are not applicable to MSK Serverless or MSK Express broker types, which have different metric sets and dimensions.
 
@@ -102,36 +102,43 @@ This sample code repository provides AWS CloudFormation templates for deploying 
 
 ## Prerequisites
 
-- An AWS account with an active Amazon MSK cluster
+- An AWS account with an active Amazon MSK Provisioned cluster (Standard brokers)
 - Permissions to create CloudFormation stacks, CloudWatch alarms, SNS topics, and (for the tag-based template) Lambda functions and IAM roles
-- Access to [AWS CloudShell](https://console.aws.amazon.com/cloudshell/)
 
 ## Deployment
 
-### Step 1: Download templates in CloudShell
+### Option 1: One-Click Deploy (Launch Stack)
 
-Open [AWS CloudShell](https://console.aws.amazon.com/cloudshell/) in your account and run:
+Deploy directly from your browser — no CLI required.
+
+**Deploy alarms for a single cluster (by ARN):**
+
+[![Launch Stack](https://s3.amazonaws.com/cloudformation-examples/cloudformation-launch-stack.png)](https://console.aws.amazon.com/cloudformation/home#/stacks/new?stackName=msk-recommended-alarms&templateURL=https://s3.amazonaws.com/aws-samples-msk-alarms/templates/msk-alarms-by-arn.yaml)
+
+**Deploy alarms for clusters matching tags (multi-cluster):**
+
+[![Launch Stack](https://s3.amazonaws.com/cloudformation-examples/cloudformation-launch-stack.png)](https://console.aws.amazon.com/cloudformation/home#/stacks/new?stackName=msk-recommended-alarms-by-tag&templateURL=https://s3.amazonaws.com/aws-samples-msk-alarms/templates/msk-alarms-by-tags.yaml)
+
+> **Note:** After clicking, fill in the parameters (cluster name, ARN, notification email, etc.) in the CloudFormation console and follow the prompts to create the stack.
+
+### Option 2: Deploy via CLI (CloudShell)
+
+Open [AWS CloudShell](https://console.aws.amazon.com/cloudshell/) and run:
 
 ```bash
-# Download templates from this repository
+# Download templates
 wget -q https://raw.githubusercontent.com/aws-samples/msk-cloudwatch-alarms/main/templates/msk-alarms-by-arn.yaml
 wget -q https://raw.githubusercontent.com/aws-samples/msk-cloudwatch-alarms/main/templates/msk-alarms-by-tags.yaml
 ```
 
-### Step 2: Deploy alarms
-
-#### Option A: Deploy for a specific cluster (by ARN)
-
-Replace the parameter values with your cluster details.
+#### Deploy for a specific cluster (by ARN)
 
 ```bash
-# Set your cluster details
 CLUSTER_NAME="my-msk-cluster"
 CLUSTER_ARN="arn:aws:kafka:us-east-1:123456789012:cluster/my-msk-cluster/abc-123-xyz"
 NUM_BROKERS=3
 NOTIFICATION_EMAIL="ops-team@example.com"
 
-# Deploy the stack
 aws cloudformation create-stack \
   --stack-name msk-alarms-${CLUSTER_NAME} \
   --template-body file://msk-alarms-by-arn.yaml \
@@ -142,25 +149,16 @@ aws cloudformation create-stack \
     ParameterKey=NotificationEmail,ParameterValue=${NOTIFICATION_EMAIL} \
   --capabilities CAPABILITY_IAM
 
-# Wait for stack creation to complete
 aws cloudformation wait stack-create-complete --stack-name msk-alarms-${CLUSTER_NAME}
-
-# Check stack status
-aws cloudformation describe-stacks --stack-name msk-alarms-${CLUSTER_NAME} \
-  --query 'Stacks[0].StackStatus' --output text
 ```
 
-#### Option B: Deploy for clusters matching tags (multi-cluster)
-
-This option discovers all MSK clusters with a specific tag and creates alarms for each. Useful for deploying across all production or development clusters at once.
+#### Deploy for clusters matching tags (multi-cluster)
 
 ```bash
-# Set your tag filter
 TAG_KEY="Environment"
 TAG_VALUE="production"
 NOTIFICATION_EMAIL="ops-team@example.com"
 
-# Deploy the stack
 aws cloudformation create-stack \
   --stack-name msk-alarms-${TAG_VALUE} \
   --template-body file://msk-alarms-by-tags.yaml \
@@ -170,15 +168,10 @@ aws cloudformation create-stack \
     ParameterKey=NotificationEmail,ParameterValue=${NOTIFICATION_EMAIL} \
   --capabilities CAPABILITY_NAMED_IAM
 
-# Wait for stack creation to complete
 aws cloudformation wait stack-create-complete --stack-name msk-alarms-${TAG_VALUE}
-
-# Check stack outputs (shows discovered clusters and alarms created)
-aws cloudformation describe-stacks --stack-name msk-alarms-${TAG_VALUE} \
-  --query 'Stacks[0].Outputs' --output table
 ```
 
-### Step 3: Confirm SNS subscription
+### Confirm SNS subscription
 
 After deployment, check your email for an SNS subscription confirmation message and confirm it. Alarms will not deliver notifications until the subscription is confirmed.
 
@@ -283,6 +276,13 @@ aws cloudformation delete-stack --stack-name msk-alarms-prod-cluster
 # Wait for deletion to complete
 aws cloudformation wait stack-delete-complete --stack-name msk-alarms-prod-cluster
 ```
+
+## Related Resources
+
+- **CloudWatch Dashboard for MSK:** For a complementary metrics dashboard, see [aws-samples/MSK-monitoring-CloudWatch](https://github.com/aws-samples/MSK-monitoring-CloudWatch) which provides a CloudFormation template for visualizing MSK metrics.
+- **AWS Blog Post:** [Set up production-ready monitoring for Amazon MSK using CloudWatch alarms](https://aws.amazon.com/blogs/big-data/set-up-production-ready-monitoring-for-amazon-msk-using-cloudwatch-alarms/)
+- **MSK Best Practices:** [Amazon MSK Best Practices documentation](https://docs.aws.amazon.com/msk/latest/developerguide/bestpractices.html)
+- **MSK Metrics Reference:** [Amazon MSK metrics for monitoring Standard brokers](https://docs.aws.amazon.com/msk/latest/developerguide/metrics-details.html)
 
 ## Security
 
