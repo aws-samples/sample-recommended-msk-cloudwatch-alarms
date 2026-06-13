@@ -1,3 +1,9 @@
+# Local notes
+NOTES-LOCAL-ONLY.md
+
+# Kiro
+.kiro/
+
 # OS files
 .DS_Store
 Thumbs.db
@@ -18,3 +24,10 @@ venv/
 # AWS
 .aws-sam/
 packaged-template.yaml
+
+# Terraform
+.terraform/
+*.tfstate
+*.tfstate.backup
+*.tfplan
+.terraform.lock.hcl

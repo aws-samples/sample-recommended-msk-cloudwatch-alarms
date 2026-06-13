@@ -40,7 +40,7 @@ output "total_alarms_created" {
 
 output "alarm_dashboard_url" {
   description = "URL to view the alarms in CloudWatch console"
-  value       = "https://${data.aws_region.current.name}.console.aws.amazon.com/cloudwatch/home?region=${data.aws_region.current.name}#alarmsV2:?~(search~(query~(source~(alarmName~(value~(prefix~(0~'MSK-${var.cluster_name})))))(sort~(column~'default)(direction~'desc))))"
+  value       = "https://${data.aws_region.current.region}.console.aws.amazon.com/cloudwatch/home?region=${data.aws_region.current.region}#alarmsV2:?~(search~(query~(source~(alarmName~(value~(prefix~(0~'MSK-${var.cluster_name})))))(sort~(column~'default)(direction~'desc))))"
 }
 
 data "aws_region" "current" {}
