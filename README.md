@@ -93,13 +93,21 @@ This sample code repository provides AWS CloudFormation templates for deploying 
 
 ```
 
-## Templates
+## Deployment Options
+
+This repository supports two infrastructure-as-code tools. Choose whichever fits your workflow:
+
+| Option | Path | Description |
+|--------|------|-------------|
+| **AWS CloudFormation** | [`templates/`](templates/) | Deploy via Launch Stack button or CLI. Supports both single-cluster (by ARN) and multi-cluster (by tag) deployment modes. |
+| **Terraform** | [`terraform/`](terraform/) | Deploy via `terraform apply`. Uses native `count` loops for per-broker alarms — no Lambda or Custom Resource needed. See the [Terraform README](terraform/README.md) for full usage instructions. |
+
+### CloudFormation Templates
 
 | Template | Description |
 |----------|-------------|
-| `templates/msk-alarms-by-arn.yaml` | CloudFormation: Deploy alarms for a single MSK cluster identified by ARN |
-| `templates/msk-alarms-by-tags.yaml` | CloudFormation: Deploy alarms using a Lambda-backed custom resource that discovers clusters by tags |
-| `terraform/` | Terraform: Deploy alarms for a single cluster — uses native `count` loops, no Lambda required |
+| `templates/msk-alarms-by-arn.yaml` | Deploy alarms for a single MSK cluster identified by ARN |
+| `templates/msk-alarms-by-tags.yaml` | Deploy alarms using a Lambda-backed custom resource that discovers clusters by tags |
 
 ## Prerequisites
 
@@ -114,11 +122,11 @@ Deploy directly from your browser — no CLI required.
 
 **Deploy alarms for a single cluster (by ARN):**
 
-[![Launch Stack](https://s3.amazonaws.com/cloudformation-examples/cloudformation-launch-stack.png)](https://console.aws.amazon.com/cloudformation/home#/stacks/new?stackName=msk-recommended-alarms&templateURL=https://s3.amazonaws.com/aws-samples-msk-alarms/templates/msk-alarms-by-arn.yaml)
+[![Launch Stack](https://s3.amazonaws.com/cloudformation-examples/cloudformation-launch-stack.png)](https://console.aws.amazon.com/cloudformation/home#/stacks/new?stackName=msk-recommended-alarms&templateURL=https://raw.githubusercontent.com/aws-samples/msk-cloudwatch-alarms/main/templates/msk-alarms-by-arn.yaml)
 
 **Deploy alarms for clusters matching tags (multi-cluster):**
 
-[![Launch Stack](https://s3.amazonaws.com/cloudformation-examples/cloudformation-launch-stack.png)](https://console.aws.amazon.com/cloudformation/home#/stacks/new?stackName=msk-recommended-alarms-by-tag&templateURL=https://s3.amazonaws.com/aws-samples-msk-alarms/templates/msk-alarms-by-tags.yaml)
+[![Launch Stack](https://s3.amazonaws.com/cloudformation-examples/cloudformation-launch-stack.png)](https://console.aws.amazon.com/cloudformation/home#/stacks/new?stackName=msk-recommended-alarms-by-tag&templateURL=https://raw.githubusercontent.com/aws-samples/msk-cloudwatch-alarms/main/templates/msk-alarms-by-tags.yaml)
 
 > **Note:** After clicking, fill in the parameters (cluster name, ARN, notification email, etc.) in the CloudFormation console and follow the prompts to create the stack.
 

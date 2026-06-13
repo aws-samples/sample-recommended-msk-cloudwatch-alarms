@@ -126,6 +126,25 @@ Resources:
         - Key: ClusterName
           Value: !Ref ClusterName
 
+  AlarmSNSTopicPolicy:
+    Type: AWS::SNS::TopicPolicy
+    Condition: CreateSNSTopic
+    Properties:
+      Topics:
+        - !Ref AlarmSNSTopic
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Sid: AllowCloudWatchAlarms
+            Effect: Allow
+            Principal:
+              Service: cloudwatch.amazonaws.com
+            Action: sns:Publish
+            Resource: !Ref AlarmSNSTopic
+            Condition:
+              ArnLike:
+                aws:SourceArn: !Sub 'arn:aws:cloudwatch:${AWS::Region}:${AWS::AccountId}:alarm:MSK-${ClusterName}-*'
+
   AlarmSNSSubscription:
     Type: AWS::SNS::Subscription
     Condition: CreateSNSTopic
@@ -162,6 +181,16 @@ Resources:
                   - cloudwatch:ListTagsForResource
                   - cloudwatch:TagResource
                 Resource: !Sub 'arn:aws:cloudwatch:${AWS::Region}:${AWS::AccountId}:alarm:MSK-${ClusterName}-*'
+              - Effect: Allow
+                Action:
+                  - sns:GetTopicAttributes
+                Resource: !If
+                  - UseExistingSNSTopic
+                  - !Ref ExistingSNSTopicArn
+                  - !If
+                    - CreateSNSTopic
+                    - !Ref AlarmSNSTopic
+                    - !Sub 'arn:aws:sns:${AWS::Region}:${AWS::AccountId}:*'
 
   AlarmCreatorFunction:
     Type: AWS::Lambda::Function
@@ -631,6 +660,8 @@ Resources:
   # ============================================================
   MSKAlarmDeployment:
     Type: Custom::MSKAlarms
+    DependsOn:
+      - AlarmCreatorFunction
     Properties:
       ServiceToken: !GetAtt AlarmCreatorFunction.Arn
       # Include parameters to trigger update on any change

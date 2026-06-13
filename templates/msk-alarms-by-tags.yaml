@@ -114,6 +114,25 @@ Resources:
         - Key: FilterTag
           Value: !Sub '${TagKey}=${TagValue}'
 
+  AlarmSNSTopicPolicy:
+    Type: AWS::SNS::TopicPolicy
+    Condition: CreateSNSTopic
+    Properties:
+      Topics:
+        - !Ref AlarmSNSTopic
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Sid: AllowCloudWatchAlarms
+            Effect: Allow
+            Principal:
+              Service: cloudwatch.amazonaws.com
+            Action: sns:Publish
+            Resource: !Ref AlarmSNSTopic
+            Condition:
+              ArnLike:
+                aws:SourceArn: !Sub 'arn:aws:cloudwatch:${AWS::Region}:${AWS::AccountId}:alarm:MSK-*'
+
   AlarmSNSSubscription:
     Type: AWS::SNS::Subscription
     Condition: CreateSNSTopic
