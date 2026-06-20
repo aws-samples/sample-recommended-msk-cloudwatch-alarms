@@ -122,11 +122,11 @@ Deploy directly from your browser — no CLI required.
 
 **Deploy alarms for a single cluster (by ARN):**
 
-[![Launch Stack](https://s3.amazonaws.com/cloudformation-examples/cloudformation-launch-stack.png)](https://console.aws.amazon.com/cloudformation/home#/stacks/new?stackName=msk-recommended-alarms&templateURL=https://raw.githubusercontent.com/aws-samples/msk-cloudwatch-alarms/main/templates/msk-alarms-by-arn.yaml)
+[![Launch Stack](https://s3.amazonaws.com/cloudformation-examples/cloudformation-launch-stack.png)](https://console.aws.amazon.com/cloudformation/home#/stacks/new?stackName=msk-recommended-alarms&templateURL=https://raw.githubusercontent.com/aws-samples/sample-recommended-msk-cloudwatch-alarms/main/templates/msk-alarms-by-arn.yaml)
 
 **Deploy alarms for clusters matching tags (multi-cluster):**
 
-[![Launch Stack](https://s3.amazonaws.com/cloudformation-examples/cloudformation-launch-stack.png)](https://console.aws.amazon.com/cloudformation/home#/stacks/new?stackName=msk-recommended-alarms-by-tag&templateURL=https://raw.githubusercontent.com/aws-samples/msk-cloudwatch-alarms/main/templates/msk-alarms-by-tags.yaml)
+[![Launch Stack](https://s3.amazonaws.com/cloudformation-examples/cloudformation-launch-stack.png)](https://console.aws.amazon.com/cloudformation/home#/stacks/new?stackName=msk-recommended-alarms-by-tag&templateURL=https://raw.githubusercontent.com/aws-samples/sample-recommended-msk-cloudwatch-alarms/main/templates/msk-alarms-by-tags.yaml)
 
 > **Note:** After clicking, fill in the parameters (cluster name, ARN, notification email, etc.) in the CloudFormation console and follow the prompts to create the stack.
 
@@ -136,8 +136,8 @@ Open [AWS CloudShell](https://console.aws.amazon.com/cloudshell/) and run:
 
 ```bash
 # Download templates
-wget -q https://raw.githubusercontent.com/aws-samples/msk-cloudwatch-alarms/main/templates/msk-alarms-by-arn.yaml
-wget -q https://raw.githubusercontent.com/aws-samples/msk-cloudwatch-alarms/main/templates/msk-alarms-by-tags.yaml
+wget -q https://raw.githubusercontent.com/aws-samples/sample-recommended-msk-cloudwatch-alarms/main/templates/msk-alarms-by-arn.yaml
+wget -q https://raw.githubusercontent.com/aws-samples/sample-recommended-msk-cloudwatch-alarms/main/templates/msk-alarms-by-tags.yaml
 ```
 
 #### Deploy for a specific cluster (by ARN)
