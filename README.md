@@ -116,19 +116,17 @@ This repository supports two infrastructure-as-code tools. Choose whichever fits
 
 ## Deployment
 
-### Option 1: One-Click Deploy (Launch Stack)
+### Option 1: Deploy from AWS Console
 
-Deploy directly from your browser — no CLI required.
+1. Download the template you need:
+   - [msk-alarms-by-arn.yaml](https://raw.githubusercontent.com/aws-samples/sample-recommended-msk-cloudwatch-alarms/main/templates/msk-alarms-by-arn.yaml) — single cluster
+   - [msk-alarms-by-tags.yaml](https://raw.githubusercontent.com/aws-samples/sample-recommended-msk-cloudwatch-alarms/main/templates/msk-alarms-by-tags.yaml) — multi-cluster by tag
 
-**Deploy alarms for a single cluster (by ARN):**
+2. Open the [CloudFormation Console](https://console.aws.amazon.com/cloudformation/home#/stacks/create)
 
-[![Launch Stack](https://s3.amazonaws.com/cloudformation-examples/cloudformation-launch-stack.png)](https://console.aws.amazon.com/cloudformation/home#/stacks/new?stackName=msk-recommended-alarms&templateURL=https://raw.githubusercontent.com/aws-samples/sample-recommended-msk-cloudwatch-alarms/main/templates/msk-alarms-by-arn.yaml)
+3. Select **Upload a template file** → choose the downloaded YAML file → **Next**
 
-**Deploy alarms for clusters matching tags (multi-cluster):**
-
-[![Launch Stack](https://s3.amazonaws.com/cloudformation-examples/cloudformation-launch-stack.png)](https://console.aws.amazon.com/cloudformation/home#/stacks/new?stackName=msk-recommended-alarms-by-tag&templateURL=https://raw.githubusercontent.com/aws-samples/sample-recommended-msk-cloudwatch-alarms/main/templates/msk-alarms-by-tags.yaml)
-
-> **Note:** After clicking, fill in the parameters (cluster name, ARN, notification email, etc.) in the CloudFormation console and follow the prompts to create the stack.
+4. Fill in the stack name and parameters (cluster name, ARN, notification email, etc.) → **Next** → **Next** → check the IAM capabilities box → **Submit**
 
 ### Option 2: Deploy via CLI (CloudShell)
 
