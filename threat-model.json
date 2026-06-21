@@ -1,0 +1,186 @@
+{
+  "schema": 1,
+  "applicationInfo": {
+    "name": "Sample: Amazon MSK Recommended CloudWatch Alarms",
+    "description": "### Overview\n\nThis sample code provides AWS CloudFormation and Terraform templates for deploying recommended CloudWatch alarms for Amazon MSK Provisioned (Standard) clusters. It creates per-broker and cluster-level alarms based on AWS best practices.\n\n### Components\n\n- **CloudFormation Templates**: Two YAML templates (ARN-based and Tag-based) that deploy CloudWatch alarms via Lambda custom resources\n- **Terraform Module**: HCL files that deploy the same alarms using native Terraform count loops\n- **Lambda Functions**: Python 3.12 functions that create CloudWatch alarms via the AWS API\n- **SNS Topic**: Optional SNS topic with KMS encryption for alarm notifications\n- **IAM Roles**: Least-privilege roles for Lambda execution\n- **EventBridge Rule**: Hourly scheduled refresh for tag-based discovery\n\n### Data Classification\n\nThis solution does NOT process, store, or transmit customer data. It only interacts with AWS service APIs (CloudWatch, MSK, SNS) to create monitoring alarms. The only user-provided data is cluster names, ARNs, and notification email addresses."
+  },
+  "architecture": {
+    "description": "### Architecture\n\nThe solution deploys CloudWatch alarms for MSK clusters using one of two approaches:\n\n**ARN-based (single cluster)**:\n1. User deploys CloudFormation stack providing cluster name, ARN, and broker count\n2. Lambda custom resource executes and calls CloudWatch PutMetricAlarm API\n3. Per-broker alarms created with correct dimensions (Cluster Name + Broker ID)\n4. Cluster-level alarms created with Cluster Name dimension only\n5. SNS topic (KMS-encrypted) created for notifications\n\n**Tag-based (multi-cluster)**:\n1. User deploys stack providing tag key/value filter\n2. Lambda discovers MSK clusters matching tags via MSK ListClustersV2 API\n3. For each discovered cluster, creates per-broker and cluster-level alarms\n4. EventBridge rule triggers hourly refresh to discover new clusters\n\n### Trust Boundaries\n\n- **User Account**: All resources deployed within the user's AWS account\n- **AWS Service APIs**: Lambda calls CloudWatch, MSK, and SNS APIs within same account\n- **No cross-account access**: No resources are shared or accessed cross-account\n- **No internet egress**: Lambda does not make external HTTP calls (only AWS SDK calls)"
+  },
+  "dataflow": {
+    "description": "### Data Flows\n\n1. **CloudFormation to Lambda**: CFN invokes Lambda with cluster parameters (name, ARN, broker count, thresholds)\n2. **Lambda to CloudWatch API**: Lambda calls PutMetricAlarm to create/update alarms\n3. **Lambda to MSK API** (tag-based only): Lambda calls ListClustersV2 and ListTagsForResource to discover clusters\n4. **CloudWatch to SNS**: When alarm triggers, CloudWatch publishes to SNS topic\n5. **SNS to Email**: SNS delivers notification to subscribed email endpoint\n6. **EventBridge to Lambda** (tag-based only): Hourly scheduled invocation for cluster refresh\n\n### Sensitive Data\n\n- **Email addresses**: Stored in SNS subscription (provided by user)\n- **Cluster ARNs**: Used as parameters, not stored beyond CloudFormation state\n- **No secrets or credentials**: No hardcoded secrets; IAM roles used for all API access"
+  },
+  "assumptions": [
+    {
+      "id": "e2643357-e8bf-4d7f-8eb1-1853dc97fef6",
+      "numericId": 1,
+      "content": "This is sample code published on aws-samples GitHub. Users are expected to review, customize, and validate before production use.",
+      "tags": ["sample-code"]
+    },
+    {
+      "id": "e366b92e-3d5a-4c75-bfe1-7a0a447e47ab",
+      "numericId": 2,
+      "content": "The deploying user has appropriate IAM permissions to create CloudFormation stacks, Lambda functions, CloudWatch alarms, SNS topics, and IAM roles in their account.",
+      "tags": ["permissions"]
+    },
+    {
+      "id": "e1bd0ca8-34c3-4b8d-8e73-83ecb4ba18d8",
+      "numericId": 3,
+      "content": "The solution operates entirely within a single AWS account. No cross-account access is required or configured.",
+      "tags": ["scope"]
+    },
+    {
+      "id": "9d3b7dff-a615-4f61-9daa-294e8e355aad",
+      "numericId": 4,
+      "content": "The Lambda functions only call AWS service APIs (CloudWatch, MSK, SNS) and do not make any external network calls.",
+      "tags": ["network"]
+    },
+    {
+      "id": "b67e300f-7e21-4ba0-a05e-381fed9f2538",
+      "numericId": 5,
+      "content": "No customer data, PII, or sensitive business data is processed by this solution. It only creates monitoring alarm configurations.",
+      "tags": ["data"]
+    }
+  ],
+  "threats": [
+    {
+      "id": "545f29dd-7b00-489e-bcb4-59c1128e7322",
+      "numericId": 1,
+      "threatSource": "An internal actor",
+      "prerequisites": "with access to the AWS account",
+      "threatAction": "modify the Lambda function code or environment variables to change alarm thresholds or disable alarms",
+      "threatImpact": "monitoring coverage gaps where critical MSK issues go undetected",
+      "impactedGoal": ["integrity", "availability"],
+      "impactedAssets": ["CloudWatch alarms", "Lambda function"],
+      "statement": "An internal actor with access to the AWS account can modify the Lambda function code or environment variables to change alarm thresholds or disable alarms, which leads to monitoring coverage gaps where critical MSK issues go undetected, resulting in reduced integrity and availability of CloudWatch alarms and Lambda function.",
+      "metadata": [{"key": "STRIDE", "value": ["T"]}],
+      "status": "threatResolved",
+      "tags": ["tampering"]
+    },
+    {
+      "id": "e70c0da5-13b8-4498-9a35-4aa46f118c67",
+      "numericId": 2,
+      "threatSource": "An internal actor",
+      "prerequisites": "with IAM permissions to modify the Lambda role",
+      "threatAction": "escalate the Lambda IAM role permissions to gain broader access to MSK or CloudWatch resources",
+      "threatImpact": "unauthorized access to MSK cluster metadata or ability to delete alarms across the account",
+      "impactedGoal": ["confidentiality", "integrity"],
+      "impactedAssets": ["IAM role", "MSK clusters", "CloudWatch alarms"],
+      "statement": "An internal actor with IAM permissions to modify the Lambda role can escalate the Lambda IAM role permissions to gain broader access to MSK or CloudWatch resources, which leads to unauthorized access to MSK cluster metadata or ability to delete alarms across the account, resulting in reduced confidentiality and integrity of IAM role, MSK clusters, and CloudWatch alarms.",
+      "metadata": [{"key": "STRIDE", "value": ["E"]}],
+      "status": "threatResolved",
+      "tags": ["elevation-of-privilege"]
+    },
+    {
+      "id": "a7df0f17-ad3f-4ecc-b3e7-0ddb6db8afff",
+      "numericId": 3,
+      "threatSource": "An actor",
+      "prerequisites": "who gains access to the SNS topic ARN",
+      "threatAction": "subscribe unauthorized endpoints to the alarm notification SNS topic",
+      "threatImpact": "alarm notifications being sent to unauthorized recipients exposing cluster names and operational state",
+      "impactedGoal": ["confidentiality"],
+      "impactedAssets": ["SNS topic", "alarm notifications"],
+      "statement": "An actor who gains access to the SNS topic ARN can subscribe unauthorized endpoints to the alarm notification SNS topic, which leads to alarm notifications being sent to unauthorized recipients exposing cluster names and operational state, resulting in reduced confidentiality of SNS topic and alarm notifications.",
+      "metadata": [{"key": "STRIDE", "value": ["I"]}],
+      "status": "threatResolved",
+      "tags": ["information-disclosure"]
+    },
+    {
+      "id": "0c472b12-9b65-4142-b343-6b49523ef751",
+      "numericId": 4,
+      "threatSource": "An actor",
+      "prerequisites": "with access to CloudFormation stack parameters",
+      "threatAction": "deploy the template with intentionally high thresholds that prevent alarms from ever firing",
+      "threatImpact": "false sense of security where MSK issues are not detected",
+      "impactedGoal": ["availability"],
+      "impactedAssets": ["CloudWatch alarms", "MSK cluster monitoring"],
+      "statement": "An actor with access to CloudFormation stack parameters can deploy the template with intentionally high thresholds that prevent alarms from ever firing, which leads to false sense of security where MSK issues are not detected, resulting in reduced availability of CloudWatch alarms and MSK cluster monitoring.",
+      "metadata": [{"key": "STRIDE", "value": ["T"]}],
+      "status": "threatIdentified",
+      "tags": ["tampering"]
+    },
+    {
+      "id": "abbd10b9-e538-4b58-b790-63c495f650c8",
+      "numericId": 5,
+      "threatSource": "An actor",
+      "prerequisites": "who can invoke the Lambda function directly",
+      "threatAction": "trigger the delete_alarms function to remove all monitoring alarms from the account",
+      "threatImpact": "complete loss of MSK monitoring coverage",
+      "impactedGoal": ["availability"],
+      "impactedAssets": ["CloudWatch alarms"],
+      "statement": "An actor who can invoke the Lambda function directly can trigger the delete_alarms function to remove all monitoring alarms from the account, which leads to complete loss of MSK monitoring coverage, resulting in reduced availability of CloudWatch alarms.",
+      "metadata": [{"key": "STRIDE", "value": ["D"]}],
+      "status": "threatResolved",
+      "tags": ["denial-of-service"]
+    }
+  ],
+  "mitigations": [
+    {
+      "id": "2cc1a2ea-133d-4c64-8d38-085e20d60423",
+      "numericId": 1,
+      "content": "IAM roles follow least-privilege principle. Lambda role is scoped to specific alarm name prefixes (MSK-{ClusterName}-*) and account-level MSK read access only.",
+      "status": "mitigationResolved",
+      "tags": ["iam"]
+    },
+    {
+      "id": "77203dab-4a80-429f-a26f-000649686c4c",
+      "numericId": 2,
+      "content": "SNS topic is encrypted with KMS (alias/aws/sns) to protect notification content at rest.",
+      "status": "mitigationResolved",
+      "tags": ["encryption"]
+    },
+    {
+      "id": "f1a2b3c4-d5e6-4f78-9012-abcdef123456",
+      "numericId": 3,
+      "content": "SNS topic policy restricts publishing to CloudWatch service principal only, scoped to specific alarm ARN patterns.",
+      "status": "mitigationResolved",
+      "tags": ["access-control"]
+    },
+    {
+      "id": "a2b3c4d5-e6f7-4890-ab12-cdef34567890",
+      "numericId": 4,
+      "content": "Lambda functions cannot be invoked directly by users. They are invoked only by CloudFormation (custom resource) or EventBridge (scheduled rule).",
+      "status": "mitigationResolved",
+      "tags": ["access-control"]
+    },
+    {
+      "id": "b3c4d5e6-f7a8-4901-bc23-def456789012",
+      "numericId": 5,
+      "content": "All alarms are tagged with ManagedBy=stackName to ensure delete operations only affect alarms created by the same stack, preventing cross-stack interference.",
+      "status": "mitigationResolved",
+      "tags": ["isolation"]
+    },
+    {
+      "id": "c4d5e6f7-a8b9-4012-cd34-ef5678901234",
+      "numericId": 6,
+      "content": "README includes explicit non-production disclaimer instructing users to review and customize IAM policies, KMS configurations, and thresholds before production deployment.",
+      "status": "mitigationResolved",
+      "tags": ["documentation"]
+    },
+    {
+      "id": "d5e6f7a8-b9c0-4123-de45-f67890123456",
+      "numericId": 7,
+      "content": "Default alarm thresholds follow AWS best practices (CPU 60%, disk 85%, etc.) but are exposed as configurable parameters for users to adjust based on their workload.",
+      "status": "mitigationResolved",
+      "tags": ["configuration"]
+    }
+  ],
+  "mitigationLinks": [
+    {"mitigationId": "2cc1a2ea-133d-4c64-8d38-085e20d60423", "linkedId": "e70c0da5-13b8-4498-9a35-4aa46f118c67"},
+    {"mitigationId": "77203dab-4a80-429f-a26f-000649686c4c", "linkedId": "a7df0f17-ad3f-4ecc-b3e7-0ddb6db8afff"},
+    {"mitigationId": "f1a2b3c4-d5e6-4f78-9012-abcdef123456", "linkedId": "a7df0f17-ad3f-4ecc-b3e7-0ddb6db8afff"},
+    {"mitigationId": "a2b3c4d5-e6f7-4890-ab12-cdef34567890", "linkedId": "abbd10b9-e538-4b58-b790-63c495f650c8"},
+    {"mitigationId": "b3c4d5e6-f7a8-4901-bc23-def456789012", "linkedId": "abbd10b9-e538-4b58-b790-63c495f650c8"},
+    {"mitigationId": "c4d5e6f7-a8b9-4012-cd34-ef5678901234", "linkedId": "0c472b12-9b65-4142-b343-6b49523ef751"},
+    {"mitigationId": "d5e6f7a8-b9c0-4123-de45-f67890123456", "linkedId": "0c472b12-9b65-4142-b343-6b49523ef751"},
+    {"mitigationId": "2cc1a2ea-133d-4c64-8d38-085e20d60423", "linkedId": "545f29dd-7b00-489e-bcb4-59c1128e7322"},
+    {"mitigationId": "a2b3c4d5-e6f7-4890-ab12-cdef34567890", "linkedId": "545f29dd-7b00-489e-bcb4-59c1128e7322"}
+  ],
+  "assumptionLinks": [
+    {"type": "Threat", "assumptionId": "e2643357-e8bf-4d7f-8eb1-1853dc97fef6", "linkedId": "0c472b12-9b65-4142-b343-6b49523ef751"},
+    {"type": "Threat", "assumptionId": "e1bd0ca8-34c3-4b8d-8e73-83ecb4ba18d8", "linkedId": "e70c0da5-13b8-4498-9a35-4aa46f118c67"},
+    {"type": "Threat", "assumptionId": "9d3b7dff-a615-4f61-9daa-294e8e355aad", "linkedId": "a7df0f17-ad3f-4ecc-b3e7-0ddb6db8afff"},
+    {"type": "Threat", "assumptionId": "b67e300f-7e21-4ba0-a05e-381fed9f2538", "linkedId": "a7df0f17-ad3f-4ecc-b3e7-0ddb6db8afff"},
+    {"type": "Mitigation", "assumptionId": "e366b92e-3d5a-4c75-bfe1-7a0a447e47ab", "linkedId": "2cc1a2ea-133d-4c64-8d38-085e20d60423"}
+  ]
+}
