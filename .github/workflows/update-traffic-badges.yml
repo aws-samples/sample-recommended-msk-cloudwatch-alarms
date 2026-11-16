@@ -1,0 +1,101 @@
+# Updates the "views" and "unique visits" README badges once a day.
+#
+# GitHub only keeps 14 days of traffic data, so each run merges the latest
+# per-day numbers into a cumulative history stored on the `badges` branch
+# (traffic.json) and publishes shields.io endpoint files (views.json,
+# visits.json) next to it.
+#
+# One-time setup:
+#   1. Create a fine-grained personal access token limited to this repository
+#      with the single permission "Administration: Read-only" (required by the
+#      GitHub traffic API). Set a short expiry and rotate it when it lapses.
+#   2. Add it as the repository secret TRAFFIC_TOKEN.
+#   3. Run this workflow once manually (Actions -> Update traffic badges).
+#
+# The first run seeds history with 1200 views and 790 unique visits recorded
+# before this workflow existed (stored under the placeholder date 2000-01-01).
+#
+# Note: unique visits are summed per day, so a visitor who returns on several
+# days is counted more than once.
+
+name: Update traffic badges
+
+on:
+  schedule:
+    - cron: "17 3 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write # push to the `badges` branch only
+
+concurrency:
+  group: update-traffic-badges
+  cancel-in-progress: false
+
+jobs:
+  update:
+    # Do not run on forks, where the secret does not exist
+    if: github.repository == 'aws-samples/sample-recommended-msk-cloudwatch-alarms'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Update badge data
+        env:
+          TRAFFIC_TOKEN: ${{ secrets.TRAFFIC_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+
+          if [ -z "${TRAFFIC_TOKEN}" ]; then
+            echo "::error::Repository secret TRAFFIC_TOKEN is not set"
+            exit 1
+          fi
+
+          # Fetch the last 14 days of traffic
+          curl -fsS \
+            -H "Authorization: Bearer ${TRAFFIC_TOKEN}" \
+            -H "Accept: application/vnd.github+json" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            "https://api.github.com/repos/${REPO}/traffic/views" > latest.json
+          jq -e '.views | type == "array"' latest.json > /dev/null
+
+          # Check out the badges branch, or create it on the first run
+          REMOTE="https://x-access-token:${GITHUB_TOKEN}@github.com/${REPO}.git"
+          if git ls-remote --exit-code --heads "${REMOTE}" badges > /dev/null 2>&1; then
+            git clone --quiet --depth 1 --branch badges "${REMOTE}" badges
+          else
+            git init --quiet --initial-branch=badges badges
+            git -C badges remote add origin "${REMOTE}"
+            # Seed with traffic recorded before this workflow existed
+            echo '{"2000-01-01": {"count": 1200, "uniques": 790}}' > badges/traffic.json
+          fi
+
+          # Merge by day (newer data overwrites the same day), then total up
+          jq --slurpfile latest latest.json '
+            . + ($latest[0].views
+                 | map({key: .timestamp[0:10], value: {count: .count, uniques: .uniques}})
+                 | from_entries)
+          ' badges/traffic.json > merged.json
+          mv merged.json badges/traffic.json
+
+          VIEWS=$(jq '[.[].count] | add // 0' badges/traffic.json)
+          VISITS=$(jq '[.[].uniques] | add // 0' badges/traffic.json)
+
+          jq -n --arg m "${VIEWS}" \
+            '{schemaVersion: 1, label: "views", message: $m, color: "green"}' \
+            > badges/views.json
+          jq -n --arg m "${VISITS}" \
+            '{schemaVersion: 1, label: "unique visits", message: $m, color: "green"}' \
+            > badges/visits.json
+
+          cd badges
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add traffic.json views.json visits.json
+          if git diff --cached --quiet; then
+            echo "No changes"
+            exit 0
+          fi
+          git commit --quiet -m "chore: update traffic badges (views=${VIEWS}, visits=${VISITS})"
+          git push --quiet origin badges
